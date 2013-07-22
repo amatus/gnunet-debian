@@ -2,3 +2,4 @@ usr/include
 usr/lib/*.so
 usr/lib/pkgconfig
 usr/share/gnunet/testing_hostkeys.dat
+usr/share/gnunet/testing_hostkeys.ecc

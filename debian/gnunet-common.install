@@ -4,5 +4,7 @@ usr/lib/libgnunetmysql.so.*
 usr/lib/libgnunetpostgres.so.*
 usr/lib/libgnunetstatistics.so.*
 usr/lib/libgnunetutil.so.*
+usr/share/doc/gnunet/README
 usr/share/locale/*/LC_MESSAGES/gnunet.mo
 usr/share/gnunet/gnunet-logo-color.png
+usr/share/man/man5/gnunet.conf.5

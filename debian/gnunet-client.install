@@ -1,11 +1,15 @@
+usr/bin/gnunet-auto-share
 usr/bin/gnunet-directory
 usr/bin/gnunet-download
 usr/bin/gnunet-download-manager
+usr/bin/gnunet-mesh
 usr/bin/gnunet-pseudonym
 usr/bin/gnunet-publish
 usr/bin/gnunet-search
 usr/bin/gnunet-statistics
 usr/bin/gnunet-unindex
+usr/bin/gnunet-uri
+usr/share/man/man1/gnunet-auto-share.1
 usr/share/man/man1/gnunet-directory.1
 usr/share/man/man1/gnunet-download.1
 usr/share/man/man1/gnunet-download-manager.1
@@ -14,4 +18,5 @@ usr/share/man/man1/gnunet-publish.1
 usr/share/man/man1/gnunet-search.1
 usr/share/man/man1/gnunet-statistics.1
 usr/share/man/man1/gnunet-unindex.1
+usr/share/man/man1/gnunet-uri.1
 
