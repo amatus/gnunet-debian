@@ -1,3 +1,10 @@
+gnunet (0.9.5a-1) UNRELEASED; urgency=low
+
+  * Imported Upstream version 0.9.5a.
+  * Dropped patches that were integrated upstream.
+
+ -- David Barksdale <david.barksdale@adcedosolutions.com>  Mon, 22 Jul 2013 09:11:04 -0500
+
 gnunet (0.9.3-7) unstable; urgency=low
 
   * Revert previous changes and go back to 0.9.3-5 to target wheezy.
