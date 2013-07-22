@@ -29,6 +29,7 @@
 #include "gnunet_statistics_service.h"
 #include "gnunet_transport_service.h"
 #include "gnunet_transport_plugin.h"
+#include "transport.h"
 #include "gnunet_util_lib.h"
 
 // TODO:
@@ -43,12 +44,14 @@
  * @param connect_cb function to call if we connect to a peer
  * @param disconnect_cb function to call if we disconnect from a peer
  * @param peer_address_cb function to call if a neighbour's active address changes
+ * @param max_fds maximum number of fds to use
  */
 void
 GST_neighbours_start (void *cls,
-                      GNUNET_TRANSPORT_NotifyConnect connect_cb,
+    									NotifyConnect connect_cb,
                       GNUNET_TRANSPORT_NotifyDisconnect disconnect_cb,
-                      GNUNET_TRANSPORT_PeerIterateCallback peer_address_cb);
+                      GNUNET_TRANSPORT_PeerIterateCallback peer_address_cb,
+                      unsigned int max_fds);
 
 
 /**
@@ -83,7 +86,9 @@ GST_neighbours_test_connected (const struct GNUNET_PeerIdentity *target);
  * @param cls closure
  * @param success GNUNET_OK on success, GNUNET_NO on failure, GNUNET_SYSERR if we're not connected
  */
-typedef void (*GST_NeighbourSendContinuation) (void *cls, int success);
+typedef void (*GST_NeighbourSendContinuation) (void *cls, int success,
+                                               size_t bytes_payload,
+                                               size_t bytes_on_wire);
 
 
 /**
@@ -170,6 +175,8 @@ GST_neighbours_force_disconnect (const struct GNUNET_PeerIdentity *target);
  * @param ats performance data
  * @param ats_count number of entries in ats (including 0-termination)
  * @param address the address (or NULL)
+ * @param bandwidth_in inbound quota in NBO
+ * @param bandwidth_out outbound quota in NBO
  */
 typedef void (*GST_NeighbourIterator) (void *cls,
                                        const struct GNUNET_PeerIdentity *
@@ -177,7 +184,9 @@ typedef void (*GST_NeighbourIterator) (void *cls,
                                        const struct GNUNET_ATS_Information *
                                        ats, uint32_t ats_count,
                                        const struct GNUNET_HELLO_Address *
-                                       address);
+                                       address,
+                                       struct GNUNET_BANDWIDTH_Value32NBO bandwidth_in,
+                                       struct GNUNET_BANDWIDTH_Value32NBO bandwidth_out);
 
 
 /**
@@ -195,8 +204,10 @@ GST_neighbours_iterate (GST_NeighbourIterator cb, void *cb_cls);
  *
  * @param peer identity of the peer where the session died
  * @param session session that is gone
+ * @return GNUNET_YES if this was a session used, GNUNET_NO if
+ *        this session was not in use
  */
-void
+int
 GST_neighbours_session_terminated (const struct GNUNET_PeerIdentity *peer,
                                    struct Session *session);
 

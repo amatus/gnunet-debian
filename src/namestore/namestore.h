@@ -26,26 +26,18 @@
 #ifndef NAMESTORE_H
 #define NAMESTORE_H
 
-/*
- * Collect message types here, move to protocols later
+/**
+ * Maximum length of any name, including 0-termination.
  */
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_START 430
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_LOOKUP_NAME 431
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_LOOKUP_NAME_RESPONSE 432
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_PUT 433
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_PUT_RESPONSE 434
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_CREATE 435
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_CREATE_RESPONSE 436
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_REMOVE 437
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_REMOVE_RESPONSE 438
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_TO_NAME 439
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_TO_NAME_RESPONSE 440
+#define MAX_NAME_LEN 256
 
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_ITERATION_START 445
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_ITERATION_RESPONSE 446
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_ITERATION_NEXT 447
-#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_ITERATION_STOP 448
-
+/**
+ * Convert a UTF-8 string to UTF-8 lowercase
+ * @param src source string
+ * @return converted result
+ */
+char *
+GNUNET_NAMESTORE_normalize_string (const char *src);
 
 /**
  * Convert a short hash to a string (for printing debug messages).
@@ -399,6 +391,49 @@ struct RecordRemoveMessage
 
 
 /**
+ * Removal of the record succeeded.
+ */
+#define RECORD_REMOVE_RESULT_SUCCESS 0
+
+/**
+ * There are NO records for the given name.
+ */
+#define RECORD_REMOVE_RESULT_NO_RECORDS 1
+
+/**
+ * The specific record that was to be removed was
+ * not found.
+ */
+#define RECORD_REMOVE_RESULT_RECORD_NOT_FOUND 2
+
+/**
+ * Internal error, failed to sign the remaining records.
+ * (Note: not used?)
+ */
+#define RECORD_REMOVE_RESULT_FAILED_TO_SIGN 3
+
+/**
+ * Internal error, failed to store the updated record set
+ */
+#define RECORD_REMOVE_RESULT_FAILED_TO_PUT_UPDATE 4
+
+/**
+ * Internal error, failed to remove records from database
+ */
+#define RECORD_REMOVE_RESULT_FAILED_TO_REMOVE 5
+
+/**
+ * Internal error, failed to access database
+ */
+#define RECORD_REMOVE_RESULT_FAILED_ACCESS_DATABASE 6
+
+/**
+ * Internal error, failed to access database
+ */
+#define RECORD_REMOVE_RESULT_FAILED_INTERNAL_ERROR 7
+
+
+/**
  * Remove a record from the namestore response
  */
 struct RecordRemoveResponseMessage
@@ -409,12 +444,7 @@ struct RecordRemoveResponseMessage
   struct GNUNET_NAMESTORE_Header gns_header;
 
   /**
-   *  result:
-   *  0 : successful
-   *  1 : no records for entry
-   *  2 : Could not find record to remove
-   *  3 : Failed to create new signature
-   *  4 : Failed to put new set of records in database
+   * Result code (see RECORD_REMOVE_RESULT_*).  In network byte order.
    */
   int32_t op_result;
 };

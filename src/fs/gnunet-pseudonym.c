@@ -95,7 +95,7 @@ progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
 
 
 static void
-ns_printer (void *cls, const char *name, const GNUNET_HashCode * id)
+ns_printer (void *cls, const char *name, const struct GNUNET_HashCode * id)
 {
   struct GNUNET_CRYPTO_HashAsciiEncoded enc;
 
@@ -105,7 +105,7 @@ ns_printer (void *cls, const char *name, const GNUNET_HashCode * id)
 
 
 static int
-pseudo_printer (void *cls, const GNUNET_HashCode * pseudonym,
+pseudo_printer (void *cls, const struct GNUNET_HashCode * pseudonym,
                 const char *name, const char *unique_name,
                 const struct GNUNET_CONTAINER_MetaData *md, int rating)
 {
@@ -136,7 +136,7 @@ pseudo_printer (void *cls, const GNUNET_HashCode * pseudonym,
 static void
 post_advertising (void *cls, const struct GNUNET_FS_Uri *uri, const char *emsg)
 {
-  GNUNET_HashCode nsid;
+  struct GNUNET_HashCode nsid;
   char *set;
   int delta;
 
@@ -313,10 +313,16 @@ main (int argc, char *const *argv)
   };
   bo.expiration_time =
       GNUNET_FS_year_to_time (GNUNET_FS_get_current_year () + 2);
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "gnunet-pseudonym [OPTIONS]",
-                              gettext_noop ("Manage GNUnet pseudonyms."),
-                              options, &run, NULL)) ? ret : 1;
+
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+
+  ret = (GNUNET_OK ==
+	 GNUNET_PROGRAM_run (argc, argv, "gnunet-pseudonym [OPTIONS]",
+			     gettext_noop ("Manage GNUnet pseudonyms."),
+			     options, &run, NULL)) ? ret : 1;
+  GNUNET_free ((void*) argv);
+  return ret;
 }
 
 /* end of gnunet-pseudonym.c */

@@ -364,8 +364,7 @@ extract_files (struct ScanTreeNode *item)
   
   /* this is the expensive operation, *afterwards* we'll check for aborts */
   meta = GNUNET_CONTAINER_meta_data_create ();
-  if (NULL != plugins)
-    EXTRACTOR_extract (plugins, item->filename, NULL, 0, &add_to_md, meta);
+  EXTRACTOR_extract (plugins, item->filename, NULL, 0, &add_to_md, meta);
   slen = strlen (item->filename) + 1;
   size = GNUNET_CONTAINER_meta_data_get_serialized_size (meta);
   if (-1 == size)
@@ -377,6 +376,11 @@ extract_files (struct ScanTreeNode *item)
 		       item->filename, slen))
       return GNUNET_SYSERR;    
     return GNUNET_OK;
+  }
+  else if (size > (UINT16_MAX - sizeof (struct GNUNET_MessageHeader) - slen))
+  {
+    /* We can't transfer more than 64k bytes in one message. */
+    size = UINT16_MAX - sizeof (struct GNUNET_MessageHeader) - slen;
   }
   {
     char buf[size + slen];
@@ -402,6 +406,31 @@ extract_files (struct ScanTreeNode *item)
 }
 
 
+#ifndef WINDOWS
+/**
+ * Install a signal handler to ignore SIGPIPE.
+ */
+static void
+ignore_sigpipe ()
+{
+  struct sigaction oldsig;
+  struct sigaction sig;
+
+  memset (&sig, 0, sizeof (struct sigaction));
+  sig.sa_handler = SIG_IGN;
+  sigemptyset (&sig.sa_mask);
+#ifdef SA_INTERRUPT
+  sig.sa_flags = SA_INTERRUPT;  /* SunOS */
+#else
+  sig.sa_flags = SA_RESTART;
+#endif
+  if (0 != sigaction (SIGPIPE, &sig, &oldsig))
+    fprintf (stderr,
+             "Failed to install SIGPIPE handler: %s\n", strerror (errno));
+}
+#endif
+
+
 /**
  * Main function of the helper process to extract meta data.
  *
@@ -413,7 +442,7 @@ extract_files (struct ScanTreeNode *item)
  * @return 0 on success
  */
 int main(int argc,
-	 char **argv)
+	 char *const *argv)
 {
   const char *filename_expanded;
   const char *ex;
@@ -424,6 +453,11 @@ int main(int argc,
    * binary mode.
    */
   _setmode (1, _O_BINARY);
+  /* Get utf-8-encoded arguments */
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 5;
+#else
+  ignore_sigpipe ();
 #endif
 
   /* parse command line */
@@ -432,6 +466,9 @@ int main(int argc,
     FPRINTF (stderr, 
 	     "%s",
 	     "gnunet-helper-fs-publish needs exactly one or two arguments\n");
+#if WINDOWS
+    GNUNET_free ((void*) argv);
+#endif
     return 1;
   }
   filename_expanded = argv[1];
@@ -450,13 +487,23 @@ int main(int argc,
 				    &root))
   {
     (void) write_message (GNUNET_MESSAGE_TYPE_FS_PUBLISH_HELPER_ERROR, NULL, 0);
+    EXTRACTOR_plugin_remove_all (plugins);
+#if WINDOWS
+    GNUNET_free ((void*) argv);
+#endif
     return 2;
   }
   /* signal that we're done counting files, so that a percentage of 
      progress can now be calculated */
   if (GNUNET_OK !=
       write_message (GNUNET_MESSAGE_TYPE_FS_PUBLISH_HELPER_COUNTING_DONE, NULL, 0))
+  {
+    EXTRACTOR_plugin_remove_all (plugins);
+#if WINDOWS
+    GNUNET_free ((void*) argv);
+#endif
     return 3;  
+  }
   if (NULL != root)
   {
     if (GNUNET_OK !=
@@ -464,15 +511,20 @@ int main(int argc,
     {
       (void) write_message (GNUNET_MESSAGE_TYPE_FS_PUBLISH_HELPER_ERROR, NULL, 0);
       free_tree (root);
+      EXTRACTOR_plugin_remove_all (plugins);
+#if WINDOWS
+      GNUNET_free ((void*) argv);
+#endif
       return 4;
     }
     free_tree (root);
   }
   /* enable "clean" shutdown by telling parent that we are done */
   (void) write_message (GNUNET_MESSAGE_TYPE_FS_PUBLISH_HELPER_FINISHED, NULL, 0);
-  if (NULL != plugins)
-    EXTRACTOR_plugin_remove_all (plugins);
-
+  EXTRACTOR_plugin_remove_all (plugins);
+#if WINDOWS
+  GNUNET_free ((void*) argv);  
+#endif
   return 0;
 }
 

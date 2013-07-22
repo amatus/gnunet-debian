@@ -107,6 +107,10 @@ struct GNUNET_MESH_MessageHandler
 /**
  * Method called whenever another peer has added us to a tunnel
  * the other peer initiated.
+ * Only called (once) upon reception of data with a message type which was
+ * subscribed to in GNUNET_MESH_connect. A call to GNUNET_MESH_tunnel_destroy
+ * causes te tunnel to be ignored and no further notifications are sent about
+ * the same tunnel.
  *
  * @param cls closure
  * @param tunnel new handle to the tunnel
@@ -154,9 +158,6 @@ typedef uint32_t GNUNET_MESH_ApplicationType;
  * Connect to the mesh service.
  *
  * @param cfg configuration to use
- * @param queue_size size of the data message queue, shared among all tunnels
- *                   (each tunnel is guaranteed to accept at least one message,
- *                    no matter what is the status of other tunnels)
  * @param cls closure for the various callbacks that follow
  *            (including handlers in the handlers array)
  * @param new_tunnel function called when an *inbound* tunnel is created
@@ -172,8 +173,7 @@ typedef uint32_t GNUNET_MESH_ApplicationType;
  *         (in this case, init is never called)
  */
 struct GNUNET_MESH_Handle *
-GNUNET_MESH_connect (const struct GNUNET_CONFIGURATION_Handle *cfg,
-                     unsigned int queue_size, void *cls,
+GNUNET_MESH_connect (const struct GNUNET_CONFIGURATION_Handle *cfg, void *cls,
                      GNUNET_MESH_InboundTunnelNotificationHandler new_tunnel,
                      GNUNET_MESH_TunnelEndHandler cleaner,
                      const struct GNUNET_MESH_MessageHandler *handlers,
@@ -223,6 +223,29 @@ typedef void (*GNUNET_MESH_PeerConnectHandler) (void *cls,
                                                 GNUNET_ATS_Information * atsi);
 
 
+/**
+ * Announce to ther peer the availability of services described by the regex,
+ * in order to be reachable to other peers via connect_by_string.
+ * 
+ * Note that the first GNUNET_REGEX_INITIAL_BYTES characters are considered
+ * to be part of a prefix, (for instance 'gnunet://').
+ * If you put a variable part in there (*, +. ()), all matching strings
+ * will be stored in the DHT.
+ *
+ * @param h Handle to mesh.
+ * @param regex String with the regular expression describing local services.
+ * @param compression_characters How many characters can be assigned to one
+ *                               edge of the graph. The bigger the variability
+ *                               of the data, the smaller this parameter should
+ *                               be (down to 1).
+ *                               For maximum compression, use strlen (regex)
+ *                               or 0 (special value). Use with care!
+ */
+void
+GNUNET_MESH_announce_regex (struct GNUNET_MESH_Handle *h,
+                            const char *regex,
+                            unsigned int compression_characters);
+
 
 /**
  * Create a new tunnel (we're initiator and will be allowed to add/remove peers
@@ -248,6 +271,37 @@ GNUNET_MESH_tunnel_create (struct GNUNET_MESH_Handle *h, void *tunnel_ctx,
  */
 void
 GNUNET_MESH_tunnel_destroy (struct GNUNET_MESH_Tunnel *tunnel);
+
+
+/**
+ * Request that the tunnel data rate is limited to the speed of the slowest
+ * receiver.
+ * 
+ * @param tunnel Tunnel affected.
+ */
+void
+GNUNET_MESH_tunnel_speed_min (struct GNUNET_MESH_Tunnel *tunnel);
+
+
+/**
+ * Request that the tunnel data rate is limited to the speed of the fastest
+ * receiver. This is the default behavior.
+ * 
+ * @param tunnel Tunnel affected.
+ */
+void
+GNUNET_MESH_tunnel_speed_max (struct GNUNET_MESH_Tunnel *tunnel);
+
+
+/**
+ * Turn on/off the buffering status of the tunnel.
+ * 
+ * @param tunnel Tunnel affected.
+ * @param buffer GNUNET_YES to turn buffering on (default),
+ *               GNUNET_NO otherwise.
+ */
+void
+GNUNET_MESH_tunnel_buffer (struct GNUNET_MESH_Tunnel *tunnel, int buffer);
 
 
 /**
@@ -288,6 +342,45 @@ GNUNET_MESH_peer_request_connect_by_type (struct GNUNET_MESH_Tunnel *tunnel,
 
 
 /**
+ * Request that the mesh should try to connect to a peer matching the
+ * description given in the service string.
+ *
+ * @param tunnel handle to existing tunnel
+ * @param description string describing the destination node requirements
+ */
+void
+GNUNET_MESH_peer_request_connect_by_string (struct GNUNET_MESH_Tunnel *tunnel,
+                                            const char *description);
+
+
+/**
+ * Request that the given peer isn't added to this tunnel in calls to
+ * connect_by_* calls, (due to misbehaviour, bad performance, ...).
+ *
+ * @param tunnel handle to existing tunnel.
+ * @param peer peer identity of the peer which should be blacklisted
+ *                  for the tunnel.
+ */
+void
+GNUNET_MESH_peer_blacklist (struct GNUNET_MESH_Tunnel *tunnel,
+                            const struct GNUNET_PeerIdentity *peer);
+
+
+/**
+ * Request that the given peer isn't blacklisted anymore from this tunnel,
+ * and therefore can be added in future calls to connect_by_*.
+ * The peer must have been previously blacklisted for this tunnel.
+ *
+ * @param tunnel handle to existing tunnel.
+ * @param peer peer identity of the peer which shouldn't be blacklisted
+ *                  for the tunnel anymore.
+ */
+void
+GNUNET_MESH_peer_unblacklist (struct GNUNET_MESH_Tunnel *tunnel,
+                              const struct GNUNET_PeerIdentity *peer);
+
+
+/**
  * Handle for a transmission request.
  */
 struct GNUNET_MESH_TransmitHandle;
@@ -296,10 +389,11 @@ struct GNUNET_MESH_TransmitHandle;
 /**
  * Ask the mesh to call "notify" once it is ready to transmit the
  * given number of bytes to the specified tunnel or target.
+ * Only one call can be active at any time, to issue another request,
+ * wait for the callback or cancel the current request.
  *
  * @param tunnel tunnel to use for transmission
  * @param cork is corking allowed for this transmission?
- * @param priority how important is the message?
  * @param maxdelay how long can the message wait?
  * @param target destination for the message
  *               NULL for multicast to all tunnel targets
@@ -315,7 +409,6 @@ struct GNUNET_MESH_TransmitHandle;
  */
 struct GNUNET_MESH_TransmitHandle *
 GNUNET_MESH_notify_transmit_ready (struct GNUNET_MESH_Tunnel *tunnel, int cork,
-                                   uint32_t priority,
                                    struct GNUNET_TIME_Relative maxdelay,
                                    const struct GNUNET_PeerIdentity *target,
                                    size_t notify_size,
@@ -334,13 +427,100 @@ GNUNET_MESH_notify_transmit_ready_cancel (struct GNUNET_MESH_TransmitHandle
 
 
 /**
+ * Method called to retrieve information about each tunnel the mesh peer
+ * is aware of.
+ *
+ * @param cls Closure.
+ * @param initiator Peer that started the tunnel (owner).
+ * @param tunnel_number Tunnel number.
+ * @param peers Array of peer identities that participate in the tunnel.
+ * @param npeers Number of peers in peers.
+ */
+typedef void (*GNUNET_MESH_TunnelsCB) (void *cls,
+                                       const struct GNUNET_PeerIdentity *owner,
+                                       unsigned int tunnel_number,
+                                       const struct GNUNET_PeerIdentity *peers,
+                                       unsigned int npeers);
+
+
+/**
+ * Method called to retrieve information about a specific tunnel the mesh peer
+ * is aware of, including all transit nodes.
+ *
+ * @param cls Closure.
+ * @param peer Peer in the tunnel's tree.
+ * @param parent Parent of the current peer. All 0 when peer is root.
+ */
+typedef void (*GNUNET_MESH_TunnelCB) (void *cls,
+                                      const struct GNUNET_PeerIdentity *peer,
+                                      const struct GNUNET_PeerIdentity *parent);
+
+
+/**
+ * Request information about the running mesh peer.
+ * The callback will be called for every tunnel known to the service,
+ * listing all active peers that blong to the tunnel.
+ *
+ * If called again on the same handle, it will overwrite the previous
+ * callback and cls. To retrieve the cls, monitor_cancel must be
+ * called first.
+ *
+ * WARNING: unstable API, likely to change in the future!
+ *
+ * @param h Handle to the mesh peer.
+ * @param callback Function to call with the requested data.
+ * @param callback_cls Closure for @c callback.
+ */
+void
+GNUNET_MESH_get_tunnels (struct GNUNET_MESH_Handle *h,
+                         GNUNET_MESH_TunnelsCB callback,
+                         void *callback_cls);
+
+
+/**
+ * Request information about a specific tunnel of the running mesh peer.
+ *
+ * WARNING: unstable API, likely to change in the future!
+ *
+ * @param h Handle to the mesh peer.
+ * @param initiator ID of the owner of the tunnel.
+ * @param tunnel_number Tunnel number.
+ * @param callback Function to call with the requested data.
+ * @param callback_cls Closure for @c callback.
+ */
+void
+GNUNET_MESH_show_tunnel (struct GNUNET_MESH_Handle *h,
+                         struct GNUNET_PeerIdentity *initiator,
+                         unsigned int tunnel_number,
+                         GNUNET_MESH_TunnelCB callback,
+                         void *callback_cls);
+
+
+/**
+ * Cancel a monitor request. The monitor callback will not be called.
+ *
+ * WARNING: unstable API, likely to change in the future!
+ *
+ * @param h Mesh handle.
+ *
+ * @return Closure given to GNUNET_MESH_monitor, if any.
+ */
+void *
+GNUNET_MESH_get_tunnels_cancel (struct GNUNET_MESH_Handle *h);
+
+
+/**
  * Transition API for tunnel ctx management
+ * 
+ * FIXME deprecated
  */
 void
 GNUNET_MESH_tunnel_set_data (struct GNUNET_MESH_Tunnel *tunnel, void *data);
 
 /**
  * Transition API for tunnel ctx management
+ * 
+ * FIXME deprecated
  */
 void *
 GNUNET_MESH_tunnel_get_data (struct GNUNET_MESH_Tunnel *tunnel);

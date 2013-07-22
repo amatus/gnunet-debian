@@ -1,6 +1,6 @@
 /*
      This file is part of GNUnet.
-     (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2009 Christian Grothoff (and other contributing authors)
+     (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2009, 2012 Christian Grothoff (and other contributing authors)
 
      GNUnet is free software; you can redistribute it and/or modify
      it under the terms of the GNU General Public License as published
@@ -20,14 +20,12 @@
 
 /**
  * @file include/platform.h
- * @brief plaform specifics
- *
+ * @brief plaform specific includes and defines
  * @author Nils Durner
- *
+ * @author Christian Grothoff
  * This file should never be included by installed
- * header files (thos starting with "gnunet_").
+ * header files (those starting with "gnunet_").
  */
-
 #ifndef PLATFORM_H
 #define PLATFORM_H
 
@@ -50,7 +48,7 @@
 #include <sys/types.h>
 #endif
 
-#define ALLOW_EXTRA_CHECKS GNUNET_NO
+#define ALLOW_EXTRA_CHECKS GNUNET_YES
 
 /**
  * For strptime (glibc2 needs this).
@@ -111,6 +109,9 @@
 #ifdef WINDOWS
 #include <malloc.h>             /* for alloca(), on other OSes it's in stdlib.h */
 #endif
+#ifdef HAVE_MALLOC_H
+#include <malloc.h>             /* for mallinfo on GNU */
+#endif
 #ifndef _MSC_VER
 #include <unistd.h>             /* KLB_FIX */
 #endif
@@ -138,7 +139,7 @@
 #ifdef SOMEBSD
 #include <net/if.h>
 #endif
-#ifdef GNUNET_freeBSD
+#ifdef FREEBSD
 #include <semaphore.h>
 #endif
 #ifdef DARWIN
@@ -146,7 +147,7 @@
 #include <semaphore.h>
 #include <net/if.h>
 #endif
-#ifdef LINUX
+#if defined(LINUX) || defined(GNU)
 #include <net/if.h>
 #endif
 #ifdef SOLARIS

@@ -22,21 +22,11 @@
  * @file util/crypto_rsa.c
  * @brief public key cryptography (RSA) with libgcrypt
  * @author Christian Grothoff
- *
- * Note that the code locks often needlessly on the gcrypt-locking api.
- * One would think that simple MPI operations should not require locking
- * (since only global operations on the random pool must be locked,
- * strictly speaking).  But libgcrypt does sometimes require locking in
- * unexpected places, so the safe solution is to always lock even if it
- * is not required.  The performance impact is minimal anyway.
  */
-
 #include "platform.h"
 #include <gcrypt.h>
 #include "gnunet_common.h"
-#include "gnunet_crypto_lib.h"
-#include "gnunet_disk_lib.h"
-#include "gnunet_strings_lib.h"
+#include "gnunet_util_lib.h"
 
 #define LOG(kind,...) GNUNET_log_from (kind, "util", __VA_ARGS__)
 
@@ -44,20 +34,22 @@
 
 #define LOG_STRERROR_FILE(kind,syscall,filename) GNUNET_log_from_strerror_file (kind, "util", syscall, filename)
 
-/**
- * The private information of an RSA key pair.
- * NOTE: this must match the definition in crypto_ksk.c
- */
-struct GNUNET_CRYPTO_RsaPrivateKey
-{
-  gcry_sexp_t sexp;
-};
-
-
 #define HOSTKEY_LEN 2048
 
 #define EXTRA_CHECKS ALLOW_EXTRA_CHECKS
 
+
+/**
+ * The private information of an RSA key pair.
+ * NOTE: this must match the definition in crypto_ksk.c and gnunet-rsa.c!
+ */
+struct GNUNET_CRYPTO_RsaPrivateKey
+{
+  /**
+   * Libgcrypt S-expression for the ECC key.
+   */
+  gcry_sexp_t sexp;
+};
 
 /**
  * Log an error message at log-level 'level' that indicates
@@ -70,6 +62,10 @@ struct GNUNET_CRYPTO_RsaPrivateKey
  * If target != size, move target bytes to the
  * end of the size-sized buffer and zero out the
  * first target-size bytes.
+ *
+ * @param buf original buffer
+ * @param size number of bytes in the buffer
+ * @param target target size of the buffer
  */
 static void
 adjust (unsigned char *buf, size_t size, size_t target)
@@ -81,69 +77,50 @@ adjust (unsigned char *buf, size_t size, size_t target)
   }
 }
 
+
 /**
- * Create a new private key. Caller must free return value.
+ * Free memory occupied by RSA private key.
  *
- * @return fresh private key
- */
-struct GNUNET_CRYPTO_RsaPrivateKey *
-GNUNET_CRYPTO_rsa_key_create ()
-{
-  struct GNUNET_CRYPTO_RsaPrivateKey *ret;
-  gcry_sexp_t s_key;
-  gcry_sexp_t s_keyparam;
-
-  GNUNET_assert (0 ==
-                 gcry_sexp_build (&s_keyparam, NULL,
-                                  "(genkey(rsa(nbits %d)(rsa-use-e 3:257)))",
-                                  HOSTKEY_LEN));
-  GNUNET_assert (0 == gcry_pk_genkey (&s_key, s_keyparam));
-  gcry_sexp_release (s_keyparam);
-#if EXTRA_CHECKS
-  GNUNET_assert (0 == gcry_pk_testkey (s_key));
-#endif
-  ret = GNUNET_malloc (sizeof (struct GNUNET_CRYPTO_RsaPrivateKey));
-  ret->sexp = s_key;
-  return ret;
-}
-
-/**
- * Free memory occupied by hostkey
- * @param hostkey pointer to the memory to free
+ * @param key pointer to the memory to free
  */
 void
-GNUNET_CRYPTO_rsa_key_free (struct GNUNET_CRYPTO_RsaPrivateKey *hostkey)
+GNUNET_CRYPTO_rsa_key_free (struct GNUNET_CRYPTO_RsaPrivateKey *key)
 {
-  gcry_sexp_release (hostkey->sexp);
-  GNUNET_free (hostkey);
+  gcry_sexp_release (key->sexp);
+  GNUNET_free (key);
 }
 
+
+/**
+ * Extract values from an S-expression.
+ *
+ * @param array where to store the result(s)
+ * @param sexp S-expression to parse
+ * @param topname top-level name in the S-expression that is of interest
+ * @param elems names of the elements to extract
+ * @return 0 on success
+ */
 static int
 key_from_sexp (gcry_mpi_t * array, gcry_sexp_t sexp, const char *topname,
                const char *elems)
 {
-  gcry_sexp_t list, l2;
+  gcry_sexp_t list;
+  gcry_sexp_t l2;
   const char *s;
-  int i, idx;
+  unsigned int i;
+  unsigned int idx;
 
-  list = gcry_sexp_find_token (sexp, topname, 0);
-  if (!list)
-  {
-    return 1;
-  }
+  if (! (list = gcry_sexp_find_token (sexp, topname, 0)))
+    return 1;  
   l2 = gcry_sexp_cadr (list);
   gcry_sexp_release (list);
   list = l2;
-  if (!list)
-  {
+  if (! list)  
     return 2;
-  }
-
   idx = 0;
   for (s = elems; *s; s++, idx++)
   {
-    l2 = gcry_sexp_find_token (list, s, 1);
-    if (!l2)
+    if (! (l2 = gcry_sexp_find_token (list, s, 1)))
     {
       for (i = 0; i < idx; i++)
       {
@@ -155,7 +132,7 @@ key_from_sexp (gcry_mpi_t * array, gcry_sexp_t sexp, const char *topname,
     }
     array[idx] = gcry_sexp_nth_mpi (l2, 1, GCRYMPI_FMT_USG);
     gcry_sexp_release (l2);
-    if (!array[idx])
+    if (! array[idx])
     {
       for (i = 0; i < idx; i++)
       {
@@ -170,8 +147,10 @@ key_from_sexp (gcry_mpi_t * array, gcry_sexp_t sexp, const char *topname,
   return 0;
 }
 
+
 /**
  * Extract the public key of the host.
+ *
  * @param priv the private key
  * @param pub where to write the public key
  */
@@ -186,9 +165,9 @@ GNUNET_CRYPTO_rsa_key_get_public (const struct GNUNET_CRYPTO_RsaPrivateKey
   int rc;
 
   rc = key_from_sexp (skey, priv->sexp, "public-key", "ne");
-  if (rc)
+  if (0 != rc)
     rc = key_from_sexp (skey, priv->sexp, "private-key", "ne");
-  if (rc)
+  if (0 != rc)
     rc = key_from_sexp (skey, priv->sexp, "rsa", "ne");
   GNUNET_assert (0 == rc);
   pub->len =
@@ -222,7 +201,7 @@ GNUNET_CRYPTO_rsa_key_get_public (const struct GNUNET_CRYPTO_RsaPrivateKey
  * @return string representing  'pub'
  */
 char *
-GNUNET_CRYPTO_rsa_public_key_to_string (struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded *pub)
+GNUNET_CRYPTO_rsa_public_key_to_string (const struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded *pub)
 {
   char *pubkeybuf;
   size_t keylen = (sizeof (struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded)) * 8;
@@ -280,16 +259,15 @@ GNUNET_CRYPTO_rsa_public_key_from_string (const char *enc,
 
 
 /**
- * Internal: publicKey => RSA-Key.
+ * Convert the given public key from the network format to the
+ * S-expression that can be used by libgcrypt.
  *
- * Note that the return type is not actually a private
- * key but rather an sexpression for the public key!
+ * @param publicKey public key to decode
+ * @return NULL on error
  */
-static struct GNUNET_CRYPTO_RsaPrivateKey *
-public2PrivateKey (const struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded
-                   *publicKey)
+static gcry_sexp_t
+decode_public_key (const struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded *publicKey)
 {
-  struct GNUNET_CRYPTO_RsaPrivateKey *ret;
   gcry_sexp_t result;
   gcry_mpi_t n;
   gcry_mpi_t e;
@@ -306,17 +284,15 @@ public2PrivateKey (const struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded
     return NULL;
   }
   size = GNUNET_CRYPTO_RSA_DATA_ENCODING_LENGTH;
-  rc = gcry_mpi_scan (&n, GCRYMPI_FMT_USG, &publicKey->key[0], size, &size);
-  if (rc)
+  if (0 != (rc = gcry_mpi_scan (&n, GCRYMPI_FMT_USG, &publicKey->key[0], size, &size)))
   {
     LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_mpi_scan", rc);
     return NULL;
   }
   size = GNUNET_CRYPTO_RSA_KEY_LENGTH - GNUNET_CRYPTO_RSA_DATA_ENCODING_LENGTH;
-  rc = gcry_mpi_scan (&e, GCRYMPI_FMT_USG,
-                      &publicKey->key[GNUNET_CRYPTO_RSA_DATA_ENCODING_LENGTH],
-                      size, &size);
-  if (rc)
+  if (0 != (rc = gcry_mpi_scan (&e, GCRYMPI_FMT_USG,
+				&publicKey->key[GNUNET_CRYPTO_RSA_DATA_ENCODING_LENGTH],
+				size, &size)))
   {
     LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_mpi_scan", rc);
     gcry_mpi_release (n);
@@ -326,21 +302,20 @@ public2PrivateKey (const struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded
                         e);
   gcry_mpi_release (n);
   gcry_mpi_release (e);
-  if (rc)
+  if (0 != rc)
   {
     LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_sexp_build", rc);  /* erroff gives more info */
     return NULL;
   }
-  ret = GNUNET_malloc (sizeof (struct GNUNET_CRYPTO_RsaPrivateKey));
-  ret->sexp = result;
-  return ret;
+  return result;
 }
 
 
 /**
  * Encode the private key in a format suitable for
  * storing it into a file.
- * @returns encoding of the private key.
+ *
+ * @return encoding of the private key.
  *    The first 4 bytes give the size of the array, as usual.
  */
 struct GNUNET_CRYPTO_RsaPrivateKeyBinaryEncoded *
@@ -378,7 +353,7 @@ GNUNET_CRYPTO_rsa_encode_key (const struct GNUNET_CRYPTO_RsaPrivateKey *hostkey)
   size = sizeof (struct GNUNET_CRYPTO_RsaPrivateKeyBinaryEncoded);
   for (i = 0; i < 6; i++)
   {
-    if (pkv[i] != NULL)
+    if (NULL != pkv[i])
     {
       GNUNET_assert (0 ==
                      gcry_mpi_aprint (GCRYMPI_FMT_USG,
@@ -432,6 +407,7 @@ GNUNET_CRYPTO_rsa_encode_key (const struct GNUNET_CRYPTO_RsaPrivateKey *hostkey)
  *
  * @param buf the buffer where the private key data is stored
  * @param len the length of the data in 'buffer'
+ * @return NULL on error
  */
 struct GNUNET_CRYPTO_RsaPrivateKey *
 GNUNET_CRYPTO_rsa_decode_key (const char *buf, uint16_t len)
@@ -440,11 +416,17 @@ GNUNET_CRYPTO_rsa_decode_key (const char *buf, uint16_t len)
   const struct GNUNET_CRYPTO_RsaPrivateKeyBinaryEncoded *encoding =
       (const struct GNUNET_CRYPTO_RsaPrivateKeyBinaryEncoded *) buf;
   gcry_sexp_t res;
-  gcry_mpi_t n, e, d, p, q, u;
+  gcry_mpi_t n;
+  gcry_mpi_t e;
+  gcry_mpi_t d;
+  gcry_mpi_t p;
+  gcry_mpi_t q;
+  gcry_mpi_t u;
   int rc;
   size_t size;
-  int pos;
+  size_t pos;
   uint16_t enc_len;
+  size_t erroff;
 
   enc_len = ntohs (encoding->len);
   if (len != enc_len)
@@ -456,7 +438,7 @@ GNUNET_CRYPTO_rsa_decode_key (const char *buf, uint16_t len)
                       &((const unsigned char *) (&encoding[1]))[pos], size,
                       &size);
   pos += ntohs (encoding->sizen);
-  if (rc)
+  if (0 != rc)
   {
     LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_mpi_scan", rc);
     return NULL;
@@ -466,7 +448,7 @@ GNUNET_CRYPTO_rsa_decode_key (const char *buf, uint16_t len)
                       &((const unsigned char *) (&encoding[1]))[pos], size,
                       &size);
   pos += ntohs (encoding->sizee);
-  if (rc)
+  if (0 != rc)
   {
     LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_mpi_scan", rc);
     gcry_mpi_release (n);
@@ -477,7 +459,7 @@ GNUNET_CRYPTO_rsa_decode_key (const char *buf, uint16_t len)
                       &((const unsigned char *) (&encoding[1]))[pos], size,
                       &size);
   pos += ntohs (encoding->sized);
-  if (rc)
+  if (0 != rc)
   {
     LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_mpi_scan", rc);
     gcry_mpi_release (n);
@@ -492,7 +474,7 @@ GNUNET_CRYPTO_rsa_decode_key (const char *buf, uint16_t len)
                         &((const unsigned char *) (&encoding[1]))[pos], size,
                         &size);
     pos += ntohs (encoding->sizep);
-    if (rc)
+    if (0 != rc)
     {
       LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_mpi_scan", rc);
       gcry_mpi_release (n);
@@ -510,13 +492,13 @@ GNUNET_CRYPTO_rsa_decode_key (const char *buf, uint16_t len)
                         &((const unsigned char *) (&encoding[1]))[pos], size,
                         &size);
     pos += ntohs (encoding->sizeq);
-    if (rc)
+    if (0 != rc)
     {
       LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_mpi_scan", rc);
       gcry_mpi_release (n);
       gcry_mpi_release (e);
       gcry_mpi_release (d);
-      if (q != NULL)
+      if (NULL != q)
         gcry_mpi_release (q);
       return NULL;
     }
@@ -532,15 +514,15 @@ GNUNET_CRYPTO_rsa_decode_key (const char *buf, uint16_t len)
     rc = gcry_mpi_scan (&u, GCRYMPI_FMT_USG,
                         &((const unsigned char *) (&encoding[1]))[pos], size,
                         &size);
-    if (rc)
+    if (0 != rc)
     {
       LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_mpi_scan", rc);
       gcry_mpi_release (n);
       gcry_mpi_release (e);
       gcry_mpi_release (d);
-      if (p != NULL)
+      if (NULL != p)
         gcry_mpi_release (p);
-      if (q != NULL)
+      if (NULL != q)
         gcry_mpi_release (q);
       return NULL;
     }
@@ -548,40 +530,40 @@ GNUNET_CRYPTO_rsa_decode_key (const char *buf, uint16_t len)
   else
     u = NULL;
 
-  if ((p != NULL) && (q != NULL) && (u != NULL))
+  if ((NULL != p) && (NULL != q) && (NULL != u))
   {
-    rc = gcry_sexp_build (&res, &size,  /* erroff */
+    rc = gcry_sexp_build (&res, &erroff,
                           "(private-key(rsa(n %m)(e %m)(d %m)(p %m)(q %m)(u %m)))",
                           n, e, d, p, q, u);
   }
   else
   {
-    if ((p != NULL) && (q != NULL))
+    if ((NULL != p) && (NULL != q))
     {
-      rc = gcry_sexp_build (&res, &size,        /* erroff */
+      rc = gcry_sexp_build (&res, &erroff,
                             "(private-key(rsa(n %m)(e %m)(d %m)(p %m)(q %m)))",
                             n, e, d, p, q);
     }
     else
     {
-      rc = gcry_sexp_build (&res, &size,        /* erroff */
+      rc = gcry_sexp_build (&res, &erroff,
                             "(private-key(rsa(n %m)(e %m)(d %m)))", n, e, d);
     }
   }
   gcry_mpi_release (n);
   gcry_mpi_release (e);
   gcry_mpi_release (d);
-  if (p != NULL)
+  if (NULL != p)
     gcry_mpi_release (p);
-  if (q != NULL)
+  if (NULL != q)
     gcry_mpi_release (q);
-  if (u != NULL)
+  if (NULL != u)
     gcry_mpi_release (u);
 
-  if (rc)
+  if (0 != rc)
     LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_sexp_build", rc);
 #if EXTRA_CHECKS
-  if (gcry_pk_testkey (res))
+  if (0 != (rc = gcry_pk_testkey (res)))
   {
     LOG_GCRY (GNUNET_ERROR_TYPE_ERROR, "gcry_pk_testkey", rc);
     return NULL;
@@ -590,6 +572,120 @@ GNUNET_CRYPTO_rsa_decode_key (const char *buf, uint16_t len)
   ret = GNUNET_malloc (sizeof (struct GNUNET_CRYPTO_RsaPrivateKey));
   ret->sexp = res;
   return ret;
+}
+
+
+/**
+ * Create a new private key. Caller must free return value.
+ *
+ * @return fresh private key
+ */
+static struct GNUNET_CRYPTO_RsaPrivateKey *
+rsa_key_create ()
+{
+  struct GNUNET_CRYPTO_RsaPrivateKey *ret;
+  gcry_sexp_t s_key;
+  gcry_sexp_t s_keyparam;
+
+  GNUNET_assert (0 ==
+                 gcry_sexp_build (&s_keyparam, NULL,
+                                  "(genkey(rsa(nbits %d)(rsa-use-e 3:257)))",
+                                  HOSTKEY_LEN));
+  GNUNET_assert (0 == gcry_pk_genkey (&s_key, s_keyparam));
+  gcry_sexp_release (s_keyparam);
+#if EXTRA_CHECKS
+  GNUNET_assert (0 == gcry_pk_testkey (s_key));
+#endif
+  ret = GNUNET_malloc (sizeof (struct GNUNET_CRYPTO_RsaPrivateKey));
+  ret->sexp = s_key;
+  return ret;
+}
+
+
+/**
+ * Try to read the private key from the given file.
+ *
+ * @param filename file to read the key from
+ * @return NULL on error
+ */
+static struct GNUNET_CRYPTO_RsaPrivateKey *
+try_read_key (const char *filename)
+{
+  struct GNUNET_CRYPTO_RsaPrivateKey *ret;
+  struct GNUNET_CRYPTO_RsaPrivateKeyBinaryEncoded *enc;
+  struct GNUNET_DISK_FileHandle *fd;
+  OFF_T fs;
+  uint16_t len;
+
+  if (GNUNET_YES != GNUNET_DISK_file_test (filename))
+    return NULL;
+
+  /* hostkey file exists already, read it! */
+  if (NULL == (fd = GNUNET_DISK_file_open (filename, GNUNET_DISK_OPEN_READ,
+					   GNUNET_DISK_PERM_NONE)))
+  {
+    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_ERROR, "open", filename);
+    return NULL;
+  }
+  if (GNUNET_OK != (GNUNET_DISK_file_handle_size (fd, &fs)))
+  {
+    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_ERROR, "stat", filename);
+    (void) GNUNET_DISK_file_close (fd);
+    return NULL;
+  }
+  if (0 == fs)
+  {
+    GNUNET_break (GNUNET_OK == GNUNET_DISK_file_close (fd));
+    return NULL;
+  }
+  if (fs > UINT16_MAX)
+  {
+    LOG (GNUNET_ERROR_TYPE_ERROR,
+         _("File `%s' does not contain a valid private key (too long, %llu bytes).  Renaming it.\n"),	
+         filename,
+	 (unsigned long long) fs);
+    GNUNET_break (GNUNET_OK == GNUNET_DISK_file_close (fd));
+    GNUNET_DISK_file_backup (filename);
+    return NULL;
+  }
+
+  enc = GNUNET_malloc (fs);
+  GNUNET_break (fs == GNUNET_DISK_file_read (fd, enc, fs));
+  len = ntohs (enc->len);
+  ret = NULL;
+  if ((len != fs) ||
+      (NULL == (ret = GNUNET_CRYPTO_rsa_decode_key ((char *) enc, len))))
+  {
+    LOG (GNUNET_ERROR_TYPE_ERROR,
+         _("File `%s' does not contain a valid private key (failed decode, %llu bytes).  Deleting it.\n"),
+         filename,
+	 (unsigned long long) fs);
+    GNUNET_break (GNUNET_OK == GNUNET_DISK_file_close (fd));
+    GNUNET_DISK_file_backup (filename);
+    GNUNET_free (enc);
+    return NULL;
+  }
+  GNUNET_free (enc);
+
+  GNUNET_break (GNUNET_OK == GNUNET_DISK_file_close (fd));
+  return ret;  
+}
+
+
+/**
+ * Wait for a short time (we're trying to lock a file or want
+ * to give another process a shot at finishing a disk write, etc.).
+ * Sleeps for 100ms (as that should be long enough for virtually all
+ * modern systems to context switch and allow another process to do
+ * some 'real' work).
+ */
+static void
+short_wait ()
+{
+  struct GNUNET_TIME_Relative timeout;
+
+  timeout = GNUNET_TIME_relative_multiply (GNUNET_TIME_UNIT_MILLISECONDS, 100);
+  (void) GNUNET_NETWORK_socket_select (NULL, NULL, NULL, timeout);
 }
 
 
@@ -630,7 +726,7 @@ GNUNET_CRYPTO_rsa_key_create_from_file (const char *filename)
                                 GNUNET_DISK_PERM_USER_WRITE);
     if (NULL == fd)
     {
-      if (errno == EEXIST)
+      if (EEXIST == errno)
       {
         if (GNUNET_YES != GNUNET_DISK_file_test (filename))
         {
@@ -653,18 +749,18 @@ GNUNET_CRYPTO_rsa_key_create_from_file (const char *filename)
                                   sizeof (struct GNUNET_CRYPTO_RsaPrivateKeyBinaryEncoded),
                                   GNUNET_YES))
     {
-      sleep (1);
+      short_wait ();
       if (0 == ++cnt % 10)
       {
         ec = errno;
         LOG (GNUNET_ERROR_TYPE_ERROR,
-             _("Could not aquire lock on file `%s': %s...\n"), filename,
+             _("Could not acquire lock on file `%s': %s...\n"), filename,
              STRERROR (ec));
       }
     }
     LOG (GNUNET_ERROR_TYPE_INFO,
          _("Creating a new private key.  This may take a while.\n"));
-    ret = GNUNET_CRYPTO_rsa_key_create ();
+    ret = rsa_key_create ();
     GNUNET_assert (ret != NULL);
     enc = GNUNET_CRYPTO_rsa_encode_key (ret);
     GNUNET_assert (enc != NULL);
@@ -680,9 +776,6 @@ GNUNET_CRYPTO_rsa_key_create_from_file (const char *filename)
     GNUNET_assert (GNUNET_YES == GNUNET_DISK_file_close (fd));
     GNUNET_CRYPTO_rsa_key_get_public (ret, &pub);
     GNUNET_CRYPTO_hash (&pub, sizeof (pub), &pid.hashPubKey);
-    LOG (GNUNET_ERROR_TYPE_INFO,
-         _("I am host `%s'.  Stored new private key in `%s'.\n"),
-         GNUNET_i2s (&pid), filename);
     return ret;
   }
   /* hostkey file exists already, read it! */
@@ -705,13 +798,13 @@ GNUNET_CRYPTO_rsa_key_create_from_file (const char *filename)
       {
         ec = errno;
         LOG (GNUNET_ERROR_TYPE_ERROR,
-             _("Could not aquire lock on file `%s': %s...\n"), filename,
+             _("Could not acquire lock on file `%s': %s...\n"), filename,
              STRERROR (ec));
         LOG (GNUNET_ERROR_TYPE_ERROR,
              _
-             ("This may be ok if someone is currently generating a hostkey.\n"));
+             ("This may be ok if someone is currently generating a private key.\n"));
       }
-      sleep (1);
+      short_wait ();
       continue;
     }
     if (GNUNET_YES != GNUNET_DISK_file_test (filename))
@@ -730,7 +823,7 @@ GNUNET_CRYPTO_rsa_key_create_from_file (const char *filename)
       fs = 0;
     if (fs < sizeof (struct GNUNET_CRYPTO_RsaPrivateKeyBinaryEncoded))
     {
-      /* maybe we got the read lock before the hostkey generating
+      /* maybe we got the read lock before the key generating
        * process had a chance to get the write lock; give it up! */
       if (GNUNET_YES !=
           GNUNET_DISK_file_unlock (fd, 0,
@@ -740,14 +833,14 @@ GNUNET_CRYPTO_rsa_key_create_from_file (const char *filename)
       {
         LOG (GNUNET_ERROR_TYPE_ERROR,
              _
-             ("When trying to read hostkey file `%s' I found %u bytes but I need at least %u.\n"),
+             ("When trying to read key file `%s' I found %u bytes but I need at least %u.\n"),
              filename, (unsigned int) fs,
              (unsigned int) sizeof (struct GNUNET_CRYPTO_RsaPrivateKeyBinaryEncoded));
         LOG (GNUNET_ERROR_TYPE_ERROR,
              _
-             ("This may be ok if someone is currently generating a hostkey.\n"));
+             ("This may be ok if someone is currently generating a private key.\n"));
       }
-      sleep (2);                /* wait a bit longer! */
+      short_wait ();                /* wait a bit longer! */
       continue;
     }
     break;
@@ -762,10 +855,7 @@ GNUNET_CRYPTO_rsa_key_create_from_file (const char *filename)
     LOG (GNUNET_ERROR_TYPE_ERROR,
          _("File `%s' does not contain a valid private key.  Deleting it.\n"),
          filename);
-    if (0 != UNLINK (filename))
-    {
-      LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "unlink", filename);
-    }
+    GNUNET_DISK_file_backup (filename);
   }
   GNUNET_free (enc);
   if (GNUNET_YES !=
@@ -777,24 +867,242 @@ GNUNET_CRYPTO_rsa_key_create_from_file (const char *filename)
   {
     GNUNET_CRYPTO_rsa_key_get_public (ret, &pub);
     GNUNET_CRYPTO_hash (&pub, sizeof (pub), &pid.hashPubKey);
-    LOG (GNUNET_ERROR_TYPE_INFO,
-         _("I am host `%s'.  Read private key from `%s'.\n"), GNUNET_i2s (&pid),
-         filename);
   }
   return ret;
 }
 
 
 /**
- * Setup a hostkey file for a peer given the name of the
+ * Handle to cancel private key generation and state for the
+ * key generation operation.
+ */
+struct GNUNET_CRYPTO_RsaKeyGenerationContext
+{
+  
+  /**
+   * Continuation to call upon completion.
+   */
+  GNUNET_CRYPTO_RsaKeyCallback cont;
+
+  /**
+   * Closure for 'cont'.
+   */
+  void *cont_cls;
+
+  /**
+   * Name of the file.
+   */
+  char *filename;
+
+  /**
+   * Handle to the helper process which does the key generation.
+   */ 
+  struct GNUNET_OS_Process *gnunet_rsa;
+  
+  /**
+   * Handle to 'stdout' of gnunet-rsa.  We 'read' on stdout to detect
+   * process termination (instead of messing with SIGCHLD).
+   */
+  struct GNUNET_DISK_PipeHandle *gnunet_rsa_out;
+
+  /**
+   * Location where we store the private key if it already existed.
+   * (if this is used, 'filename', 'gnunet_rsa' and 'gnunet_rsa_out' will
+   * not be used).
+   */
+  struct GNUNET_CRYPTO_RsaPrivateKey *pk;
+  
+  /**
+   * Task reading from 'gnunet_rsa_out' to wait for process termination.
+   */
+  GNUNET_SCHEDULER_TaskIdentifier read_task;
+  
+};
+
+
+/**
+ * Task called upon shutdown or process termination of 'gnunet-rsa' during
+ * RSA key generation.  Check where we are and perform the appropriate
+ * action.
+ *
+ * @param cls the 'struct GNUNET_CRYPTO_RsaKeyGenerationContext'
+ * @param tc scheduler context
+ */
+static void
+check_key_generation_completion (void *cls,
+				 const struct GNUNET_SCHEDULER_TaskContext *tc)
+{
+  struct GNUNET_CRYPTO_RsaKeyGenerationContext *gc = cls;
+  struct GNUNET_CRYPTO_RsaPrivateKey *pk;
+
+  gc->read_task = GNUNET_SCHEDULER_NO_TASK;
+  if (0 != (tc->reason & GNUNET_SCHEDULER_REASON_SHUTDOWN))
+  {
+    gc->cont (gc->cont_cls, NULL, _("interrupted by shutdown"));
+    GNUNET_CRYPTO_rsa_key_create_stop (gc);
+    return;
+  }
+  GNUNET_assert (GNUNET_OK == 
+		 GNUNET_OS_process_wait (gc->gnunet_rsa));
+  GNUNET_OS_process_destroy (gc->gnunet_rsa);
+  gc->gnunet_rsa = NULL;
+  if (NULL == (pk = try_read_key (gc->filename)))
+  {
+    GNUNET_break (0);
+    gc->cont (gc->cont_cls, NULL, _("gnunet-rsa failed"));
+    GNUNET_CRYPTO_rsa_key_create_stop (gc);
+    return;
+  }
+  gc->cont (gc->cont_cls, pk, NULL);
+  GNUNET_DISK_pipe_close (gc->gnunet_rsa_out);
+  GNUNET_free (gc->filename);
+  GNUNET_free (gc);
+}
+
+
+/**
+ * Return the private RSA key which already existed on disk
+ * (asynchronously) to the caller.
+ *
+ * @param cls the 'struct GNUNET_CRYPTO_RsaKeyGenerationContext'
+ * @param tc scheduler context (unused)
+ */
+static void
+async_return_key (void *cls,
+		  const struct GNUNET_SCHEDULER_TaskContext *tc)
+{
+  struct GNUNET_CRYPTO_RsaKeyGenerationContext *gc = cls;
+
+  gc->cont (gc->cont_cls,
+	    gc->pk,
+	    NULL);
+  GNUNET_free (gc);
+}
+
+
+/**
+ * Create a new private key by reading it from a file.  If the files
+ * does not exist, create a new key and write it to the file.  If the
+ * contents of the file are invalid the old file is deleted and a
+ * fresh key is created.
+ *
+ * @param filename name of file to use for storage
+ * @param cont function to call when done (or on errors)
+ * @param cont_cls closure for 'cont'
+ * @return handle to abort operation, NULL on fatal errors (cont will not be called if NULL is returned)
+ */
+struct GNUNET_CRYPTO_RsaKeyGenerationContext *
+GNUNET_CRYPTO_rsa_key_create_start (const char *filename,
+				    GNUNET_CRYPTO_RsaKeyCallback cont,
+				    void *cont_cls)
+{
+  struct GNUNET_CRYPTO_RsaKeyGenerationContext *gc;
+  struct GNUNET_CRYPTO_RsaPrivateKey *pk;
+  const char *weak_random;
+
+  if (NULL != (pk = try_read_key (filename)))
+  {
+    /* quick happy ending: key already exists! */
+    gc = GNUNET_malloc (sizeof (struct GNUNET_CRYPTO_RsaKeyGenerationContext));
+    gc->pk = pk;
+    gc->cont = cont;
+    gc->cont_cls = cont_cls;
+    gc->read_task = GNUNET_SCHEDULER_add_now (&async_return_key,
+					      gc);
+    return gc;
+  }
+  gc = GNUNET_malloc (sizeof (struct GNUNET_CRYPTO_RsaKeyGenerationContext));
+  gc->filename = GNUNET_strdup (filename);
+  gc->cont = cont;
+  gc->cont_cls = cont_cls;
+  gc->gnunet_rsa_out = GNUNET_DISK_pipe (GNUNET_NO,
+					 GNUNET_NO,
+					 GNUNET_NO,
+					 GNUNET_YES);
+  if (NULL == gc->gnunet_rsa_out)
+  {
+    GNUNET_log_strerror (GNUNET_ERROR_TYPE_WARNING, "pipe");
+    GNUNET_free (gc->filename);
+    GNUNET_free (gc);
+    return NULL;
+  }
+  weak_random = NULL;
+  if (GNUNET_YES ==
+      GNUNET_CRYPTO_random_is_weak ())
+    weak_random = "-w";
+  gc->gnunet_rsa = GNUNET_OS_start_process (GNUNET_NO,
+					    GNUNET_OS_INHERIT_STD_ERR,
+					    NULL, 
+					    gc->gnunet_rsa_out,
+					    "gnunet-rsa",
+					    "gnunet-rsa",					    
+					    gc->filename,
+					    weak_random,
+					    NULL);
+  if (NULL == gc->gnunet_rsa)
+  {
+    GNUNET_log_strerror (GNUNET_ERROR_TYPE_WARNING, "fork");
+    GNUNET_DISK_pipe_close (gc->gnunet_rsa_out);
+    GNUNET_free (gc->filename);
+    GNUNET_free (gc);
+    return NULL;
+  }
+  GNUNET_assert (GNUNET_OK ==
+		 GNUNET_DISK_pipe_close_end (gc->gnunet_rsa_out,
+					     GNUNET_DISK_PIPE_END_WRITE));
+  gc->read_task = GNUNET_SCHEDULER_add_read_file (GNUNET_TIME_UNIT_FOREVER_REL,
+						  GNUNET_DISK_pipe_handle (gc->gnunet_rsa_out,
+									   GNUNET_DISK_PIPE_END_READ),
+						  &check_key_generation_completion,
+						  gc);
+  return gc;
+}
+
+
+/**
+ * Abort RSA key generation.
+ *
+ * @param gc key generation context to abort
+ */
+void
+GNUNET_CRYPTO_rsa_key_create_stop (struct GNUNET_CRYPTO_RsaKeyGenerationContext *gc)
+{
+  if (GNUNET_SCHEDULER_NO_TASK != gc->read_task)
+  {
+    GNUNET_SCHEDULER_cancel (gc->read_task);
+    gc->read_task = GNUNET_SCHEDULER_NO_TASK;
+  }
+  if (NULL != gc->gnunet_rsa)
+  {
+    (void) GNUNET_OS_process_kill (gc->gnunet_rsa, SIGKILL);
+    GNUNET_break (GNUNET_OK ==
+		  GNUNET_OS_process_wait (gc->gnunet_rsa));
+    GNUNET_OS_process_destroy (gc->gnunet_rsa);
+    GNUNET_DISK_pipe_close (gc->gnunet_rsa_out);
+  }
+
+  if (NULL != gc->filename)
+  {
+    if (0 != UNLINK (gc->filename))
+      GNUNET_log_strerror_file (GNUNET_ERROR_TYPE_WARNING, "unlink", gc->filename);
+    GNUNET_free (gc->filename);
+  }
+  if (NULL != gc->pk)
+    GNUNET_CRYPTO_rsa_key_free (gc->pk);
+  GNUNET_free (gc);
+}
+
+
+/**
+ * Setup a key file for a peer given the name of the
  * configuration file (!).  This function is used so that
  * at a later point code can be certain that reading a
- * hostkey is fast (for example in time-dependent testcases).
+ * key is fast (for example in time-dependent testcases).
  *
  * @param cfg_name name of the configuration file to use
  */
 void
-GNUNET_CRYPTO_setup_hostkey (const char *cfg_name)
+GNUNET_CRYPTO_rsa_setup_hostkey (const char *cfg_name)
 {
   struct GNUNET_CONFIGURATION_Handle *cfg;
   struct GNUNET_CRYPTO_RsaPrivateKey *pk;
@@ -832,15 +1140,14 @@ GNUNET_CRYPTO_rsa_encrypt (const void *block, size_t size,
 {
   gcry_sexp_t result;
   gcry_sexp_t data;
-  struct GNUNET_CRYPTO_RsaPrivateKey *pubkey;
+  gcry_sexp_t psexp;
   gcry_mpi_t val;
   gcry_mpi_t rval;
   size_t isize;
   size_t erroff;
 
-  GNUNET_assert (size <= sizeof (GNUNET_HashCode));
-  pubkey = public2PrivateKey (publicKey);
-  if (pubkey == NULL)
+  GNUNET_assert (size <= sizeof (struct GNUNET_HashCode));
+  if (! (psexp = decode_public_key (publicKey)))
     return GNUNET_SYSERR;
   isize = size;
   GNUNET_assert (0 ==
@@ -849,10 +1156,9 @@ GNUNET_CRYPTO_rsa_encrypt (const void *block, size_t size,
                  gcry_sexp_build (&data, &erroff,
                                   "(data (flags pkcs1)(value %m))", val));
   gcry_mpi_release (val);
-  GNUNET_assert (0 == gcry_pk_encrypt (&result, data, pubkey->sexp));
+  GNUNET_assert (0 == gcry_pk_encrypt (&result, data, psexp));
   gcry_sexp_release (data);
-  GNUNET_CRYPTO_rsa_key_free (pubkey);
-
+  gcry_sexp_release (psexp);
   GNUNET_assert (0 == key_from_sexp (&rval, result, "rsa", "a"));
   gcry_sexp_release (result);
   isize = sizeof (struct GNUNET_CRYPTO_RsaEncryptedData);
@@ -867,7 +1173,7 @@ GNUNET_CRYPTO_rsa_encrypt (const void *block, size_t size,
 
 
 /**
- * Decrypt a given block with the hostkey.
+ * Decrypt a given block with the key.
  *
  * @param key the key with which to decrypt this block
  * @param block the data to decrypt, encoded as returned by encrypt
@@ -920,6 +1226,39 @@ GNUNET_CRYPTO_rsa_decrypt (const struct GNUNET_CRYPTO_RsaPrivateKey * key,
 
 
 /**
+ * Convert the data specified in the given purpose argument to an
+ * S-expression suitable for signature operations.
+ *
+ * @param purpose data to convert
+ * @return converted s-expression
+ */
+static gcry_sexp_t
+data_to_pkcs1 (const struct GNUNET_CRYPTO_RsaSignaturePurpose *purpose)
+{
+  struct GNUNET_HashCode hc;
+  size_t bufSize;
+  gcry_sexp_t data;
+
+  GNUNET_CRYPTO_hash (purpose, ntohl (purpose->size), &hc);
+#define FORMATSTRING "(4:data(5:flags5:pkcs1)(4:hash6:sha51264:0123456789012345678901234567890123456789012345678901234567890123))"
+  bufSize = strlen (FORMATSTRING) + 1;
+  {
+    char buff[bufSize];
+
+    memcpy (buff, FORMATSTRING, bufSize);
+    memcpy (&buff
+	    [bufSize -
+	     strlen
+	     ("0123456789012345678901234567890123456789012345678901234567890123))")
+	     - 1], &hc, sizeof (struct GNUNET_HashCode));
+    GNUNET_assert (0 == gcry_sexp_new (&data, buff, bufSize, 0));
+  }
+#undef FORMATSTRING
+  return data;
+}
+
+
+/**
  * Sign a given block.
  *
  * @param key private key to use for the signing
@@ -936,22 +1275,8 @@ GNUNET_CRYPTO_rsa_sign (const struct GNUNET_CRYPTO_RsaPrivateKey *key,
   gcry_sexp_t data;
   size_t ssize;
   gcry_mpi_t rval;
-  GNUNET_HashCode hc;
-  char *buff;
-  int bufSize;
 
-  GNUNET_CRYPTO_hash (purpose, ntohl (purpose->size), &hc);
-#define FORMATSTRING "(4:data(5:flags5:pkcs1)(4:hash6:sha51264:0123456789012345678901234567890123456789012345678901234567890123))"
-  bufSize = strlen (FORMATSTRING) + 1;
-  buff = GNUNET_malloc (bufSize);
-  memcpy (buff, FORMATSTRING, bufSize);
-  memcpy (&buff
-          [bufSize -
-           strlen
-           ("0123456789012345678901234567890123456789012345678901234567890123))")
-           - 1], &hc, sizeof (GNUNET_HashCode));
-  GNUNET_assert (0 == gcry_sexp_new (&data, buff, bufSize, 0));
-  GNUNET_free (buff);
+  data = data_to_pkcs1 (purpose);
   GNUNET_assert (0 == gcry_pk_sign (&result, data, key->sexp));
   gcry_sexp_release (data);
   GNUNET_assert (0 == key_from_sexp (&rval, result, "rsa", "s"));
@@ -987,16 +1312,12 @@ GNUNET_CRYPTO_rsa_verify (uint32_t purpose,
   gcry_sexp_t sigdata;
   size_t size;
   gcry_mpi_t val;
-  struct GNUNET_CRYPTO_RsaPrivateKey *hostkey;
-  GNUNET_HashCode hc;
-  char *buff;
-  int bufSize;
+  gcry_sexp_t psexp;
   size_t erroff;
   int rc;
 
   if (purpose != ntohl (validate->purpose))
     return GNUNET_SYSERR;       /* purpose mismatch */
-  GNUNET_CRYPTO_hash (validate, ntohl (validate->size), &hc);
   size = sizeof (struct GNUNET_CRYPTO_RsaSignature);
   GNUNET_assert (0 ==
                  gcry_mpi_scan (&val, GCRYMPI_FMT_USG,
@@ -1005,25 +1326,15 @@ GNUNET_CRYPTO_rsa_verify (uint32_t purpose,
                  gcry_sexp_build (&sigdata, &erroff, "(sig-val(rsa(s %m)))",
                                   val));
   gcry_mpi_release (val);
-  bufSize = strlen (FORMATSTRING) + 1;
-  buff = GNUNET_malloc (bufSize);
-  memcpy (buff, FORMATSTRING, bufSize);
-  memcpy (&buff
-          [strlen (FORMATSTRING) -
-           strlen
-           ("0123456789012345678901234567890123456789012345678901234567890123))")],
-          &hc, sizeof (GNUNET_HashCode));
-  GNUNET_assert (0 == gcry_sexp_new (&data, buff, bufSize, 0));
-  GNUNET_free (buff);
-  hostkey = public2PrivateKey (publicKey);
-  if (hostkey == NULL)
+  data = data_to_pkcs1 (validate);
+  if (! (psexp = decode_public_key (publicKey)))
   {
     gcry_sexp_release (data);
     gcry_sexp_release (sigdata);
     return GNUNET_SYSERR;
   }
-  rc = gcry_pk_verify (sigdata, data, hostkey->sexp);
-  GNUNET_CRYPTO_rsa_key_free (hostkey);
+  rc = gcry_pk_verify (sigdata, data, psexp);
+  gcry_sexp_release (psexp);
   gcry_sexp_release (data);
   gcry_sexp_release (sigdata);
   if (rc)

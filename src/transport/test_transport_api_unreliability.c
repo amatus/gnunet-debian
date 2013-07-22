@@ -27,23 +27,9 @@
  * achieve reliable message delivery.
  */
 #include "platform.h"
-#include "gnunet_common.h"
-#include "gnunet_hello_lib.h"
-#include "gnunet_getopt_lib.h"
-#include "gnunet_os_lib.h"
-#include "gnunet_program_lib.h"
-#include "gnunet_scheduler_lib.h"
-#include "gnunet_server_lib.h"
 #include "gnunet_transport_service.h"
 #include "gauger.h"
-#include "transport.h"
 #include "transport-testing.h"
-
-#define VERBOSE GNUNET_NO
-
-#define VERBOSE_ARM GNUNET_NO
-
-#define START_ARM GNUNET_YES
 
 /**
  * Testcase timeout
@@ -85,6 +71,8 @@ struct GNUNET_TRANSPORT_TESTING_handle *tth;
  */
 
 /**
+ * Total number of messages to send
+ *
  * Note that this value must not significantly exceed
  * 'MAX_PENDING' in 'gnunet-service-transport.c', otherwise
  * messages may be dropped even for a reliable transport.
@@ -175,7 +163,7 @@ end ()
   {
     if (get_bit (bitmap, i) == 0)
     {
-      GNUNET_log (GNUNET_ERROR_TYPE_WARNING, "Did not receive message %d\n", i);
+      GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "Did not receive message %d\n", i);
       ok = -1;
     }
   }
@@ -203,6 +191,16 @@ end_badly ()
     GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
                 "Test had timeout while waiting to send data\n");
 
+  int i;
+
+  for (i = 0; i < TOTAL_MSGS; i++)
+  {
+    if (get_bit (bitmap, i) == 0)
+    {
+      GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "Did not receive message %d\n", i);
+      ok = -1;
+    }
+  }
 
   if (th != NULL)
     GNUNET_TRANSPORT_notify_transmit_ready_cancel (th);
@@ -244,8 +242,9 @@ get_size (unsigned int iter)
  * Sets a bit active in the bitmap.
  *
  * @param bitIdx which bit to set
+ * @return GNUNET_SYSERR on error, GNUNET_OK on success
  */
-static void
+static int
 set_bit (unsigned int bitIdx)
 {
   size_t arraySlot;
@@ -253,13 +252,14 @@ set_bit (unsigned int bitIdx)
 
   if (bitIdx >= sizeof (bitmap) * 8)
   {
-    GNUNET_log (GNUNET_ERROR_TYPE_WARNING, "tried to set bit %d of %d(!?!?)\n",
+    GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "tried to set bit %d of %d(!?!?)\n",
                 bitIdx, sizeof (bitmap) * 8);
-    return;
+    return GNUNET_SYSERR;
   }
   arraySlot = bitIdx / 8;
   targetBit = (1L << (bitIdx % 8));
   bitmap[arraySlot] |= targetBit;
+  return GNUNET_OK;
 }
 
 /**
@@ -272,7 +272,7 @@ set_bit (unsigned int bitIdx)
 static int
 get_bit (const char *map, unsigned int bit)
 {
-  if (bit >= TOTAL_MSGS)
+  if (bit > TOTAL_MSGS)
   {
     GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "get bit %d of %d(!?!?)\n", bit,
                 sizeof (bitmap) * 8);
@@ -333,7 +333,12 @@ notify_receive (void *cls, const struct GNUNET_PeerIdentity *peer,
   }
 #endif
   n++;
-  set_bit (ntohl (hdr->num));
+  if (GNUNET_SYSERR == set_bit (ntohl (hdr->num)))
+  {
+      GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
+                  _("Message id %u is bigger than maxmimum number of messages %u expected\n"),
+                  ntohl (hdr->num), TOTAL_MSGS);
+  }
   test_sending = GNUNET_YES;
   if (0 == (n % (TOTAL_MSGS / 100)))
   {
@@ -376,9 +381,11 @@ notify_ready (void *cls, size_t size, void *buf)
   s = get_size (n);
   GNUNET_assert (size >= s);
   GNUNET_assert (buf != NULL);
+  GNUNET_assert (n < TOTAL_MSGS);
   cbuf = buf;
   do
   {
+    GNUNET_assert (n < TOTAL_MSGS);
     hdr.header.size = htons (s);
     hdr.header.type = htons (MTYPE);
     hdr.num = htonl (n);
@@ -387,20 +394,20 @@ notify_ready (void *cls, size_t size, void *buf)
     ret += sizeof (struct TestMessage);
     memset (&cbuf[ret], n, s - sizeof (struct TestMessage));
     ret += s - sizeof (struct TestMessage);
+
 #if VERBOSE
     if (n % 5000 == 0)
     {
       GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Sending message %u of size %u\n", n,
                   s);
     }
-
 #endif
     n++;
     s = get_size (n);
     if (0 == GNUNET_CRYPTO_random_u32 (GNUNET_CRYPTO_QUALITY_WEAK, 16))
       break;                    /* sometimes pack buffer full, sometimes not */
   }
-  while (size - ret >= s);
+  while ((size - ret >= s) && (n < TOTAL_MSGS));
   if (n < TOTAL_MSGS)
   {
     th = GNUNET_TRANSPORT_notify_transmit_ready (p2->th, &p1->id, s, 0,
@@ -450,6 +457,8 @@ static void
 sendtask ()
 {
   start_time = GNUNET_TIME_absolute_get ();
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Starting to send %u messages\n",
+              TOTAL_MSGS);
   th = GNUNET_TRANSPORT_notify_transmit_ready (p2->th, &p1->id, get_size (0), 0,
                                                TIMEOUT_TRANSMIT, &notify_ready,
                                                NULL);
@@ -525,9 +534,6 @@ check ()
   static char *const argv[] = { "test-transport-api-unreliability",
     "-c",
     "test_transport_api_data.conf",
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
     NULL
   };
   static struct GNUNET_GETOPT_CommandLineOption options[] = {
@@ -553,11 +559,7 @@ main (int argc, char *argv[])
   GNUNET_TRANSPORT_TESTING_get_test_name (argv[0], &test_name);
 
   GNUNET_log_setup (test_name,
-#if VERBOSE
-                    "DEBUG",
-#else
                     "WARNING",
-#endif
                     NULL);
 
   GNUNET_TRANSPORT_TESTING_get_test_source_name (__FILE__, &test_source);

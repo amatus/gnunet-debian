@@ -109,8 +109,7 @@
 /*
  * parts taken from aircrack-ng, parts changend.
  */
-
-#define _GNU_SOURCE
+#include "gnunet_config.h"
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
@@ -140,10 +139,19 @@
 
 /**
  * Packet format type for the messages we receive from 
+ * the kernel.  This is for Ethernet 10Mbps format (no
+ * performance information included).
+ */
+#define ARPHRD_ETHER        1 
+
+
+/**
+ * Packet format type for the messages we receive from 
  * the kernel.  This is for plain messages (with no
  * performance information included).
  */
 #define ARPHRD_IEEE80211        801
+
 
 /**
  * Packet format type for the messages we receive from 
@@ -1589,6 +1597,15 @@ linux_read (struct HardwareInfos *dev,
   case ARPHRD_IEEE80211:
     n = 0; /* no header */
     break;
+  case ARPHRD_ETHER:
+    {
+      if (sizeof (struct GNUNET_TRANSPORT_WLAN_Ieee8023Frame) > caplen)
+	return 0; /* invalid */
+      memcpy (&buf[sizeof (struct GNUNET_TRANSPORT_WLAN_Ieee80211Frame)],
+	      tmpbuf + sizeof (struct GNUNET_TRANSPORT_WLAN_Ieee8023Frame),
+	      caplen - sizeof (struct GNUNET_TRANSPORT_WLAN_Ieee8023Frame) - 4 /* 4 byte FCS */);
+      return caplen - sizeof (struct GNUNET_TRANSPORT_WLAN_Ieee8023Frame) - 4;
+    }	    
   default:
     errno = ENOTSUP; /* unsupported format */
     return -1;
@@ -1652,6 +1669,16 @@ open_device_raw (struct HardwareInfos *dev)
              IFNAMSIZ, dev->iface, strerror (errno));
     return 1;
   }
+  if (((ifr.ifr_hwaddr.sa_family != ARPHRD_IEEE80211) &&
+       (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER) &&
+       (ifr.ifr_hwaddr.sa_family != ARPHRD_IEEE80211_PRISM) &&
+       (ifr.ifr_hwaddr.sa_family != ARPHRD_IEEE80211_FULL)) )
+  {
+    fprintf (stderr, "Error: interface `%.*s' is not using a supported hardware address family (got %d)\n",
+             IFNAMSIZ, dev->iface,
+	     ifr.ifr_hwaddr.sa_family);
+    return 1;
+  }
 
   /* lookup iw mode */
   memset (&wrq, 0, sizeof (struct iwreq));
@@ -1663,13 +1690,12 @@ open_device_raw (struct HardwareInfos *dev)
     wrq.u.mode = IW_MODE_MONITOR;
   }
 
-  if (((ifr.ifr_hwaddr.sa_family != ARPHRD_IEEE80211) &&
-       (ifr.ifr_hwaddr.sa_family != ARPHRD_IEEE80211_PRISM) &&
-       (ifr.ifr_hwaddr.sa_family != ARPHRD_IEEE80211_FULL)) ||
-      (wrq.u.mode != IW_MODE_MONITOR))
+  if ( (wrq.u.mode != IW_MODE_MONITOR) &&
+       (wrq.u.mode != IW_MODE_ADHOC) )	
   {
-    fprintf (stderr, "Error: interface `%.*s' is not in monitor mode\n",
-             IFNAMSIZ, dev->iface);
+    fprintf (stderr, "Error: interface `%.*s' is not in monitor or ad-hoc mode (got %d)\n",
+             IFNAMSIZ, dev->iface,
+	     wrq.u.mode);
     return 1;
   }
 
@@ -1705,7 +1731,8 @@ open_device_raw (struct HardwareInfos *dev)
 
   memcpy (&dev->pl_mac, ifr.ifr_hwaddr.sa_data, MAC_ADDR_SIZE);
   dev->arptype_in = ifr.ifr_hwaddr.sa_family;
-  if ((ifr.ifr_hwaddr.sa_family != ARPHRD_IEEE80211) &&
+  if ((ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER) &&
+      (ifr.ifr_hwaddr.sa_family != ARPHRD_IEEE80211) &&
       (ifr.ifr_hwaddr.sa_family != ARPHRD_IEEE80211_PRISM) &&
       (ifr.ifr_hwaddr.sa_family != ARPHRD_IEEE80211_FULL))
   {
@@ -1771,6 +1798,12 @@ static int
 mac_test (const struct GNUNET_TRANSPORT_WLAN_Ieee80211Frame *taIeeeHeader,
           const struct HardwareInfos *dev)
 {
+  static struct GNUNET_TRANSPORT_WLAN_MacAddress all_zeros;
+
+  if ( (0 == memcmp (&taIeeeHeader->addr3, &all_zeros, MAC_ADDR_SIZE)) ||
+       (0 == memcmp (&taIeeeHeader->addr1, &all_zeros, MAC_ADDR_SIZE)) )
+    return 0; /* some drivers set no Macs, then assume it is all for us! */
+
   if (0 != memcmp (&taIeeeHeader->addr3, &mac_bssid_gnunet, MAC_ADDR_SIZE))
     return 1; /* not a GNUnet ad-hoc package */
   if ( (0 == memcmp (&taIeeeHeader->addr1, &dev->pl_mac, MAC_ADDR_SIZE)) ||
@@ -1812,6 +1845,7 @@ stdin_send_hw (void *cls, const struct GNUNET_MessageHeader *hdr)
   struct GNUNET_TRANSPORT_WLAN_Ieee80211Frame *wlanheader;
   size_t sendsize;
   struct RadiotapTransmissionHeader rtheader;
+  struct GNUNET_TRANSPORT_WLAN_Ieee8023Frame etheader;
 
   sendsize = ntohs (hdr->size);
   if ( (sendsize <
@@ -1828,21 +1862,41 @@ stdin_send_hw (void *cls, const struct GNUNET_MessageHeader *hdr)
     exit (1);
   }
   header = (const struct GNUNET_TRANSPORT_WLAN_RadiotapSendMessage *) hdr;
-  rtheader.header.it_version = 0;
-  rtheader.header.it_pad = 0; 
-  rtheader.header.it_len = GNUNET_htole16 (sizeof (rtheader));
-  rtheader.header.it_present = GNUNET_htole16 (IEEE80211_RADIOTAP_OUR_TRANSMISSION_HEADER_MASK);
-  rtheader.rate = header->rate; 
-  rtheader.pad1 = 0;
-  rtheader.txflags = GNUNET_htole16 (IEEE80211_RADIOTAP_F_TX_NOACK | IEEE80211_RADIOTAP_F_TX_NOSEQ);
-  memcpy (write_pout.buf, &rtheader, sizeof (rtheader));
-  memcpy (&write_pout.buf[sizeof (rtheader)], &header->frame, sendsize);
-  wlanheader = (struct GNUNET_TRANSPORT_WLAN_Ieee80211Frame *) &write_pout.buf[sizeof (rtheader)];
+  switch (dev->arptype_in)
+  {
+  case ARPHRD_IEEE80211_PRISM:
+  case ARPHRD_IEEE80211_FULL:
+  case ARPHRD_IEEE80211:
+    rtheader.header.it_version = 0;
+    rtheader.header.it_pad = 0; 
+    rtheader.header.it_len = GNUNET_htole16 (sizeof (rtheader));
+    rtheader.header.it_present = GNUNET_htole16 (IEEE80211_RADIOTAP_OUR_TRANSMISSION_HEADER_MASK);
+    rtheader.rate = header->rate; 
+    rtheader.pad1 = 0;
+    rtheader.txflags = GNUNET_htole16 (IEEE80211_RADIOTAP_F_TX_NOACK | IEEE80211_RADIOTAP_F_TX_NOSEQ);
+    memcpy (write_pout.buf, &rtheader, sizeof (rtheader));
+    memcpy (&write_pout.buf[sizeof (rtheader)], &header->frame, sendsize);
+    wlanheader = (struct GNUNET_TRANSPORT_WLAN_Ieee80211Frame *) &write_pout.buf[sizeof (rtheader)];
 
-  /* payload contains MAC address, but we don't trust it, so we'll
-   * overwrite it with OUR MAC address to prevent mischief */
-  mac_set (wlanheader, dev);
-  write_pout.size = sendsize + sizeof (rtheader);
+    /* payload contains MAC address, but we don't trust it, so we'll
+     * overwrite it with OUR MAC address to prevent mischief */
+    mac_set (wlanheader, dev);
+    write_pout.size = sendsize + sizeof (rtheader);
+    break;
+  case ARPHRD_ETHER:
+    etheader.dst = header->frame.addr1;
+    /* etheader.src = header->frame.addr2; --- untrusted input */
+    etheader.src = dev->pl_mac;
+    etheader.type = htons (ETH_P_IP);
+    memcpy (write_pout.buf, &etheader, sizeof (etheader));
+    memcpy (&write_pout.buf[sizeof (etheader)], &header[1], sendsize - sizeof (struct GNUNET_TRANSPORT_WLAN_Ieee80211Frame));
+    write_pout.size = sendsize - sizeof (struct GNUNET_TRANSPORT_WLAN_Ieee80211Frame) + sizeof (etheader);
+    break;
+  default:
+    fprintf (stderr,
+	     "Unsupported ARPTYPE!\n");
+    break;
+  }
 }
 
 
@@ -1867,32 +1921,28 @@ main (int argc, char *argv[])
   int stdin_open;
   struct MessageStreamTokenizer *stdin_mst;
   int raw_eno;
+  uid_t uid;
 
+  /* assert privs so we can modify the firewall rules! */
+  uid = getuid ();
+#ifdef HAVE_SETRESUID
+  if (0 != setresuid (uid, 0, 0))
+  {
+    fprintf (stderr, "Failed to setresuid to root: %s\n", strerror (errno));
+    return 254;
+  }
+#else
+  if (0 != seteuid (0)) 
+  {
+    fprintf (stderr, "Failed to seteuid back to root: %s\n", strerror (errno));
+    return 254;
+  }
+#endif
+
+  /* make use of SGID capabilities on POSIX */
   memset (&dev, 0, sizeof (dev));
   dev.fd_raw = socket (PF_PACKET, SOCK_RAW, htons (ETH_P_ALL));
   raw_eno = errno; /* remember for later */
-
-  /* drop privs */
-  {
-    uid_t uid = getuid ();
-#ifdef HAVE_SETRESUID
-    if (0 != setresuid (uid, uid, uid))
-    {
-      fprintf (stderr, "Failed to setresuid: %s\n", strerror (errno));
-      if (-1 != dev.fd_raw)
-	(void) close (dev.fd_raw);
-      return 1;
-    }
-#else
-    if (0 != (setuid (uid) | seteuid (uid)))
-    {
-      fprintf (stderr, "Failed to setuid: %s\n", strerror (errno));
-      if (-1 != dev.fd_raw)
-	(void) close (dev.fd_raw);
-      return 1;
-    }
-  }
-#endif
 
   /* now that we've dropped root rights, we can do error checking */
   if (2 != argc)
@@ -1927,6 +1977,29 @@ main (int argc, char *argv[])
     (void) close (dev.fd_raw);
     return 1;
   }
+
+  /* drop privs */
+  {
+    uid_t uid = getuid ();
+#ifdef HAVE_SETRESUID
+    if (0 != setresuid (uid, uid, uid))
+    {
+      fprintf (stderr, "Failed to setresuid: %s\n", strerror (errno));
+      if (-1 != dev.fd_raw)
+	(void) close (dev.fd_raw);
+      return 1;
+    }
+#else
+    if (0 != (setuid (uid) | seteuid (uid)))
+    {
+      fprintf (stderr, "Failed to setuid: %s\n", strerror (errno));
+      if (-1 != dev.fd_raw)
+	(void) close (dev.fd_raw);
+      return 1;
+    }
+#endif
+  }
+
 
   /* send MAC address of the WLAN interface to STDOUT first */
   {

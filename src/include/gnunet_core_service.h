@@ -42,7 +42,7 @@ extern "C"
 /**
  * Version number of GNUnet-core API.
  */
-#define GNUNET_CORE_VERSION 0x00000000
+#define GNUNET_CORE_VERSION 0x00000001
 
 
 /**
@@ -131,7 +131,9 @@ struct GNUNET_CORE_MessageHandler
  * for good).  Note that the private key of the peer is intentionally
  * not exposed here; if you need it, your process should try to read
  * the private key file directly (which should work if you are
- * authorized...).
+ * authorized...).  Implementations of this function must not call
+ * GNUNET_CORE_disconnect (other than by scheduling a new task to
+ * do this later).
  *
  * @param cls closure
  * @param server handle to the server, NULL if we failed
@@ -148,14 +150,13 @@ typedef void (*GNUNET_CORE_StartupCallback) (void *cls,
  * (or fail) asynchronously.  This function primarily causes the given
  * callback notification functions to be invoked whenever the
  * specified event happens.  The maximum number of queued
- * notifications (queue length) is per client but the queue is shared
+ * notifications (queue length) is per client; the queue is shared
  * across all types of notifications.  So a slow client that registers
  * for 'outbound_notify' also risks missing 'inbound_notify' messages.
  * Certain events (such as connect/disconnect notifications) are not
  * subject to queue size limitations.
  *
  * @param cfg configuration to use
- * @param queue_size size of the per-peer message queue
  * @param cls closure for the various callbacks that follow (including handlers in the handlers array)
  * @param init callback to call once we have successfully
  *        connected to the core service
@@ -190,7 +191,7 @@ typedef void (*GNUNET_CORE_StartupCallback) (void *cls,
  */
 struct GNUNET_CORE_Handle *
 GNUNET_CORE_connect (const struct GNUNET_CONFIGURATION_Handle *cfg,
-                     unsigned int queue_size, void *cls,
+                     void *cls,
                      GNUNET_CORE_StartupCallback init,
                      GNUNET_CORE_ConnectEventHandler connects,
                      GNUNET_CORE_DisconnectEventHandler disconnects,
@@ -220,10 +221,13 @@ struct GNUNET_CORE_TransmitHandle;
 
 /**
  * Ask the core to call "notify" once it is ready to transmit the
- * given number of bytes to the specified "target".   Must only be
+ * given number of bytes to the specified "target".  Must only be
  * called after a connection to the respective peer has been
- * established (and the client has been informed about this).
- *
+ * established (and the client has been informed about this).  You may
+ * have one request of this type pending for each connected peer at
+ * any time.  If a peer disconnects, the application MUST call
+ * "GNUNET_CORE_notify_transmit_ready_cancel" on the respective
+ * transmission request, if one such request is pending.
  *
  * @param handle connection to core service
  * @param cork is corking allowed for this transmission?
@@ -232,18 +236,13 @@ struct GNUNET_CORE_TransmitHandle;
  * @param target who should receive the message, never NULL (can be this peer's identity for loopback)
  * @param notify_size how many bytes of buffer space does notify want?
  * @param notify function to call when buffer space is available;
- *        will be called with NULL on timeout or if the overall queue
- *        for this peer is larger than queue_size and this is currently
- *        the message with the lowest priority; will also be called
- *        with 'NULL' buf if the peer disconnects; since the disconnect
- *        signal will be emmitted even later, clients MUST cancel
+ *        will be called with NULL on timeout; clients MUST cancel
  *        all pending transmission requests DURING the disconnect
- *        handler (unless they ensure that 'notify' never calls
- *        'GNUNET_CORE_notify_transmit_ready').
+ *        handler
  * @param notify_cls closure for notify
  * @return non-NULL if the notify callback was queued,
- *         NULL if we can not even queue the request (insufficient
- *         memory); if NULL is returned, "notify" will NOT be called.
+ *         NULL if we can not even queue the request (request already pending);
+ *         if NULL is returned, "notify" will NOT be called.
  */
 struct GNUNET_CORE_TransmitHandle *
 GNUNET_CORE_notify_transmit_ready (struct GNUNET_CORE_Handle *handle, int cork,
@@ -325,6 +324,26 @@ GNUNET_CORE_is_peer_connected (const struct GNUNET_CONFIGURATION_Handle *cfg,
  */
 void
 GNUNET_CORE_is_peer_connected_cancel (struct GNUNET_CORE_ConnectTestHandle *cth);
+
+
+/**
+ * Check if the given peer is currently connected. This function is for special
+ * cirumstances (GNUNET_TESTBED uses it), normal users of the CORE API are
+ * expected to track which peers are connected based on the connect/disconnect
+ * callbacks from GNUNET_CORE_connect.  This function is NOT part of the
+ * 'versioned', 'official' API. The difference between this function and the
+ * function GNUNET_CORE_is_peer_connected() is that this one returns
+ * synchronously after looking in the CORE API cache. The function
+ * GNUNET_CORE_is_peer_connected() sends a message to the CORE service and hence
+ * its response is given asynchronously.
+ *
+ * @param h the core handle
+ * @param pid the identity of the peer to check if it has been connected to us
+ * @return GNUNET_YES if the peer is connected to us; GNUNET_NO if not
+ */
+int
+GNUNET_CORE_is_peer_connected_sync (const struct GNUNET_CORE_Handle *h,
+                                    const struct GNUNET_PeerIdentity *pid);
 
 
 #if 0                           /* keep Emacsens' auto-indent happy */

@@ -31,34 +31,6 @@
 GNUNET_NETWORK_STRUCT_BEGIN
 
 /**
- * @brief a simgle record inside a record block
- */
-struct GNSRecordBlock
-{
-  /**
-   * the record type
-   */
-  uint32_t type GNUNET_PACKED;
-
-  /**
-   * expiration time of the record
-   */
-  struct GNUNET_TIME_AbsoluteNBO expiration;
-
-  /**
-   * length of the data
-   */
-  uint32_t data_length GNUNET_PACKED;
-  
-  /* record flags */
-  uint32_t flags GNUNET_PACKED;
-
-  //Class of the record?
-
-  /* followed by the record data */
-};
-
-/**
  * @brief a record block for a given name of a single authority
  */
 struct GNSNameRecordBlock
@@ -79,7 +51,7 @@ struct GNSNameRecordBlock
 
   /* 0-terminated name here */
 
-  /* variable-size GNSRecordBlocks follows here */
+  /* variable-size serialized namestore record data */
 
 };
 

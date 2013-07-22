@@ -43,9 +43,14 @@ struct IndexInfo
 {
 
   /**
-   * This is a linked list.
+   * This is a doubly linked list.
    */
   struct IndexInfo *next;
+
+  /**
+   * This is a doubly linked list.
+   */
+  struct IndexInfo *prev;
 
   /**
    * Name of the indexed file.  Memory allocated
@@ -67,18 +72,23 @@ struct IndexInfo
   /**
    * Hash of the contents of the file.
    */
-  GNUNET_HashCode file_id;
+  struct GNUNET_HashCode file_id;
 
 };
 
 
 /**
- * Linked list of indexed files.
+ * Head of linked list of indexed files.
  */
-static struct IndexInfo *indexed_files;
+static struct IndexInfo *indexed_files_head;
 
 /**
- * Maps hash over content of indexed files to the respective filename.
+ * Tail of linked list of indexed files.
+ */
+static struct IndexInfo *indexed_files_tail;
+
+/**
+ * Maps hash over content of indexed files to the respective 'struct IndexInfo'.
  * The filenames are pointers into the indexed_files linked list and
  * do not need to be freed.
  */
@@ -109,9 +119,8 @@ write_index_list ()
   if (GNUNET_OK !=
       GNUNET_CONFIGURATION_get_value_filename (cfg, "FS", "INDEXDB", &fn))
   {
-    GNUNET_log (GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
-                _("Configuration option `%s' in section `%s' missing.\n"),
-                "INDEXDB", "FS");
+    GNUNET_log_config_missing (GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
+			       "fs", "INDEXDB");
     return;
   }
   wh = GNUNET_BIO_write_open (fn);
@@ -122,15 +131,11 @@ write_index_list ()
     GNUNET_free (fn);
     return;
   }
-  pos = indexed_files;
-  while (pos != NULL)
-  {
+  for (pos = indexed_files_head; NULL != pos; pos = pos->next)
     if ((GNUNET_OK !=
-         GNUNET_BIO_write (wh, &pos->file_id, sizeof (GNUNET_HashCode))) ||
+         GNUNET_BIO_write (wh, &pos->file_id, sizeof (struct GNUNET_HashCode))) ||
         (GNUNET_OK != GNUNET_BIO_write_string (wh, pos->filename)))
       break;
-    pos = pos->next;
-  }
   if (GNUNET_OK != GNUNET_BIO_write_close (wh))
   {
     GNUNET_log (GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
@@ -152,16 +157,15 @@ read_index_list ()
   char *fn;
   struct IndexInfo *pos;
   char *fname;
-  GNUNET_HashCode hc;
+  struct GNUNET_HashCode hc;
   size_t slen;
   char *emsg;
 
   if (GNUNET_OK !=
       GNUNET_CONFIGURATION_get_value_filename (cfg, "FS", "INDEXDB", &fn))
   {
-    GNUNET_log (GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
-                _("Configuration option `%s' in section `%s' missing.\n"),
-                "INDEXDB", "FS");
+    GNUNET_log_config_missing (GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
+			       "fs", "INDEXDB");
     return;
   }
   if (GNUNET_NO == GNUNET_DISK_file_test (fn))
@@ -180,7 +184,7 @@ read_index_list ()
   }
   while ((GNUNET_OK ==
           GNUNET_BIO_read (rh, "Hash of indexed file", &hc,
-                           sizeof (GNUNET_HashCode))) &&
+                           sizeof (struct GNUNET_HashCode))) &&
          (GNUNET_OK ==
           GNUNET_BIO_read_string (rh, "Name of indexed file", &fname,
                                   1024 * 16)) && (fname != NULL))
@@ -191,15 +195,16 @@ read_index_list ()
     pos->filename = (const char *) &pos[1];
     memcpy (&pos[1], fname, slen);
     if (GNUNET_SYSERR ==
-        GNUNET_CONTAINER_multihashmap_put (ifm, &hc, (void *) pos->filename,
+        GNUNET_CONTAINER_multihashmap_put (ifm, &pos->file_id, pos,
                                            GNUNET_CONTAINER_MULTIHASHMAPOPTION_UNIQUE_ONLY))
     {
       GNUNET_free (pos);
     }
     else
     {
-      pos->next = indexed_files;
-      indexed_files = pos;
+      GNUNET_CONTAINER_DLL_insert (indexed_files_head,
+				   indexed_files_tail,
+				   pos);
     }
     GNUNET_free (fname);
   }
@@ -218,25 +223,29 @@ read_index_list ()
 static void
 signal_index_ok (struct IndexInfo *ii)
 {
+  struct IndexInfo *ir;
   if (GNUNET_SYSERR ==
       GNUNET_CONTAINER_multihashmap_put (ifm, &ii->file_id,
-                                         (void *) ii->filename,
+                                         ii,
                                          GNUNET_CONTAINER_MULTIHASHMAPOPTION_UNIQUE_ONLY))
   {
+    ir = GNUNET_CONTAINER_multihashmap_get (ifm,
+					    &ii->file_id);
+    GNUNET_assert (NULL != ir);
     GNUNET_log (GNUNET_ERROR_TYPE_INFO,
                 _
                 ("Index request received for file `%s' is already indexed as `%s'.  Permitting anyway.\n"),
                 ii->filename,
-                (const char *) GNUNET_CONTAINER_multihashmap_get (ifm,
-                                                                  &ii->file_id));
+		ir->filename);           
     GNUNET_SERVER_transmit_context_append_data (ii->tc, NULL, 0,
                                                 GNUNET_MESSAGE_TYPE_FS_INDEX_START_OK);
     GNUNET_SERVER_transmit_context_run (ii->tc, GNUNET_TIME_UNIT_MINUTES);
     GNUNET_free (ii);
     return;
   }
-  ii->next = indexed_files;
-  indexed_files = ii;
+  GNUNET_CONTAINER_DLL_insert (indexed_files_head,
+			       indexed_files_tail,
+			       ii);
   write_index_list ();
   GNUNET_SERVER_transmit_context_append_data (ii->tc, NULL, 0,
                                               GNUNET_MESSAGE_TYPE_FS_INDEX_START_OK);
@@ -253,13 +262,13 @@ signal_index_ok (struct IndexInfo *ii)
  * @param res resulting hash, NULL on error
  */
 static void
-hash_for_index_val (void *cls, const GNUNET_HashCode * res)
+hash_for_index_val (void *cls, const struct GNUNET_HashCode * res)
 {
   struct IndexInfo *ii = cls;
 
   ii->fhc = NULL;
   if ((res == NULL) ||
-      (0 != memcmp (res, &ii->file_id, sizeof (GNUNET_HashCode))))
+      (0 != memcmp (res, &ii->file_id, sizeof (struct GNUNET_HashCode))))
   {
     GNUNET_log (GNUNET_ERROR_TYPE_WARNING,
                 _
@@ -375,8 +384,7 @@ GNUNET_FS_handle_index_list_get (void *cls, struct GNUNET_SERVER_Client *client,
 
   tc = GNUNET_SERVER_transmit_context_create (client);
   iim = (struct IndexInfoMessage *) buf;
-  pos = indexed_files;
-  while (NULL != pos)
+  for (pos = indexed_files_head; NULL != pos; pos = pos->next)
   {
     fn = pos->filename;
     slen = strlen (fn) + 1;
@@ -392,7 +400,6 @@ GNUNET_FS_handle_index_list_get (void *cls, struct GNUNET_SERVER_Client *client,
     iim->file_id = pos->file_id;
     memcpy (&iim[1], fn, slen);
     GNUNET_SERVER_transmit_context_append_message (tc, &iim->header);
-    pos = pos->next;
   }
   GNUNET_SERVER_transmit_context_append_data (tc, NULL, 0,
                                               GNUNET_MESSAGE_TYPE_FS_INDEX_LIST_END);
@@ -413,8 +420,6 @@ GNUNET_FS_handle_unindex (void *cls, struct GNUNET_SERVER_Client *client,
 {
   const struct UnindexMessage *um;
   struct IndexInfo *pos;
-  struct IndexInfo *prev;
-  struct IndexInfo *next;
   struct GNUNET_SERVER_TransmitContext *tc;
   int found;
 
@@ -426,29 +431,20 @@ GNUNET_FS_handle_unindex (void *cls, struct GNUNET_SERVER_Client *client,
     return;
   }
   found = GNUNET_NO;
-  prev = NULL;
-  pos = indexed_files;
-  while (NULL != pos)
+  for (pos = indexed_files_head; NULL != pos; pos = pos->next)
   {
-    next = pos->next;
-    if (0 == memcmp (&pos->file_id, &um->file_id, sizeof (GNUNET_HashCode)))
+    if (0 == memcmp (&pos->file_id, &um->file_id, sizeof (struct GNUNET_HashCode)))
     {
-      if (prev == NULL)
-        indexed_files = next;
-      else
-        prev->next = next;
+      GNUNET_CONTAINER_DLL_remove (indexed_files_head,
+				   indexed_files_tail,
+				   pos);
       GNUNET_break (GNUNET_OK ==
                     GNUNET_CONTAINER_multihashmap_remove (ifm, &pos->file_id,
-                                                          (void *)
-                                                          pos->filename));
+							  pos));
       GNUNET_free (pos);
       found = GNUNET_YES;
+      break;
     }
-    else
-    {
-      prev = pos;
-    }
-    pos = next;
   }
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
               "Client requested unindexing of file `%s': %s\n",
@@ -502,7 +498,7 @@ remove_cont (void *cls, int success,
  * @return GNUNET_OK on success
  */
 int
-GNUNET_FS_handle_on_demand_block (const GNUNET_HashCode * key, uint32_t size,
+GNUNET_FS_handle_on_demand_block (const struct GNUNET_HashCode * key, uint32_t size,
                                   const void *data, enum GNUNET_BLOCK_Type type,
                                   uint32_t priority, uint32_t anonymity,
                                   struct GNUNET_TIME_Absolute expiration,
@@ -511,16 +507,17 @@ GNUNET_FS_handle_on_demand_block (const GNUNET_HashCode * key, uint32_t size,
                                   void *cont_cls)
 {
   const struct OnDemandBlock *odb;
-  GNUNET_HashCode nkey;
+  struct GNUNET_HashCode nkey;
   struct GNUNET_CRYPTO_AesSessionKey skey;
   struct GNUNET_CRYPTO_AesInitializationVector iv;
-  GNUNET_HashCode query;
+  struct GNUNET_HashCode query;
   ssize_t nsize;
   char ndata[DBLOCK_SIZE];
   char edata[DBLOCK_SIZE];
   const char *fn;
   struct GNUNET_DISK_FileHandle *fh;
   uint64_t off;
+  struct IndexInfo *ii;
 
   if (size != sizeof (struct OnDemandBlock))
   {
@@ -531,7 +528,13 @@ GNUNET_FS_handle_on_demand_block (const GNUNET_HashCode * key, uint32_t size,
   }
   odb = (const struct OnDemandBlock *) data;
   off = GNUNET_ntohll (odb->offset);
-  fn = (const char *) GNUNET_CONTAINER_multihashmap_get (ifm, &odb->file_id);
+  ii = GNUNET_CONTAINER_multihashmap_get (ifm, &odb->file_id);
+  if (NULL == ii)
+  {
+    GNUNET_break (0);
+    return GNUNET_SYSERR;
+  }
+  fn = ii->filename;
   if ((NULL == fn) || (0 != ACCESS (fn, R_OK)))
   {
     GNUNET_STATISTICS_update (GSF_stats,
@@ -565,7 +568,7 @@ GNUNET_FS_handle_on_demand_block (const GNUNET_HashCode * key, uint32_t size,
   GNUNET_CRYPTO_hash_to_aes_key (&nkey, &skey, &iv);
   GNUNET_CRYPTO_aes_encrypt (ndata, nsize, &skey, &iv, edata);
   GNUNET_CRYPTO_hash (edata, nsize, &query);
-  if (0 != memcmp (&query, key, sizeof (GNUNET_HashCode)))
+  if (0 != memcmp (&query, key, sizeof (struct GNUNET_HashCode)))
   {
     GNUNET_log (GNUNET_ERROR_TYPE_WARNING,
                 _("Indexed file `%s' changed at offset %llu\n"), fn,
@@ -590,15 +593,20 @@ GNUNET_FS_indexing_done ()
 {
   struct IndexInfo *pos;
 
-  GNUNET_CONTAINER_multihashmap_destroy (ifm);
-  ifm = NULL;
-  while (NULL != (pos = indexed_files))
+  while (NULL != (pos = indexed_files_head))
   {
-    indexed_files = pos->next;
+    GNUNET_CONTAINER_DLL_remove (indexed_files_head,
+				 indexed_files_tail,
+				 pos);
     if (pos->fhc != NULL)
       GNUNET_CRYPTO_hash_file_cancel (pos->fhc);
+    GNUNET_break (GNUNET_OK ==
+		  GNUNET_CONTAINER_multihashmap_remove (ifm,
+							&pos->file_id, pos));
     GNUNET_free (pos);
   }
+  GNUNET_CONTAINER_multihashmap_destroy (ifm);
+  ifm = NULL;
   cfg = NULL;
 }
 
@@ -615,7 +623,7 @@ GNUNET_FS_indexing_init (const struct GNUNET_CONFIGURATION_Handle *c,
 {
   cfg = c;
   dsh = d;
-  ifm = GNUNET_CONTAINER_multihashmap_create (128);
+  ifm = GNUNET_CONTAINER_multihashmap_create (128, GNUNET_YES);
   read_index_list ();
   return GNUNET_OK;
 }

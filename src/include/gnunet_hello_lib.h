@@ -40,6 +40,12 @@ extern "C"
 
 
 /**
+ * Prefix that every HELLO URI must start with.
+ */
+#define GNUNET_HELLO_URI_PREFIX "gnunet://hello/"
+
+
+/**
  * An address for communicating with a peer.  We frequently
  * need this tuple and the components cannot really be
  * separated.  This is NOT the format that would be used
@@ -330,6 +336,45 @@ GNUNET_HELLO_get_id (const struct GNUNET_HELLO_Message *hello,
  */
 struct GNUNET_MessageHeader *
 GNUNET_HELLO_get_header (struct GNUNET_HELLO_Message *hello);
+
+
+typedef struct GNUNET_TRANSPORT_PluginFunctions *
+(*GNUNET_HELLO_TransportPluginsFind) (const char *name);
+
+
+/**
+ * Compose a hello URI string from a hello message.
+ *
+ * @param hello Hello message
+ * @param plugins_find Function to find transport plugins by name
+ * @return Hello URI string
+ */
+char *
+GNUNET_HELLO_compose_uri (const struct GNUNET_HELLO_Message *hello,
+                          GNUNET_HELLO_TransportPluginsFind plugins_find);
+
+/**
+ * Parse a hello URI string to a hello message.
+ *
+ * @param uri URI string to parse
+ * @param pubkey Pointer to struct where public key is parsed
+ * @param hello Pointer to struct where hello message is parsed
+ * @param plugins_find Function to find transport plugins by name
+ * @return GNUNET_OK on success, GNUNET_SYSERR if the URI was invalid, GNUNET_NO on other errors
+ */
+int
+GNUNET_HELLO_parse_uri (const char *uri,
+                        struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded *pubkey,
+                        struct GNUNET_HELLO_Message **hello,
+                        GNUNET_HELLO_TransportPluginsFind plugins_find);
+
+#if 0                           /* keep Emacsens' auto-indent happy */
+{
+#endif
+#ifdef __cplusplus
+}
+#endif
+
 
 /* ifndef GNUNET_HELLO_LIB_H */
 #endif

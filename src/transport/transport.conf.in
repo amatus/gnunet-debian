@@ -3,7 +3,6 @@ AUTOSTART = YES
 @UNIXONLY@ PORT = 2091
 HOSTNAME = localhost
 HOME = $SERVICEHOME
-CONFIG = $DEFAULTCONFIG
 BINARY = gnunet-service-transport
 #PREFIX = valgrind
 NEIGHBOUR_LIMIT = 50
@@ -27,11 +26,13 @@ UNIX_MATCH_GID = YES
 
 [transport-unix]
 PORT = 22086
+TESTING_IGNORE_KEYS = ACCEPT_FROM;
 
 [transport-tcp]
 # Use 0 to ONLY advertise as a peer behind NAT (no port binding)
 PORT = 2086
 ADVERTISED_PORT = 2086
+TESTING_IGNORE_KEYS = ACCEPT_FROM;
 
 # Maximum number of open TCP connections allowed
 MAX_CONNECTIONS = 128
@@ -47,23 +48,37 @@ MAX_CONNECTIONS = 128
 [transport-udp]
 PORT = 2086
 BROADCAST = YES
-BROADCAST_INTERVAL = 30000
+BROADCAST_INTERVAL = 30 s
 MAX_BPS = 1000000
+TESTING_IGNORE_KEYS = ACCEPT_FROM;
 
-[transport-http]
+[transport-http_client]
+MAX_CONNECTIONS = 128
+TESTING_IGNORE_KEYS = ACCEPT_FROM;
+
+[transport-http_server]
+#EXTERNAL_HOSTNAME = <your hostname/path>
 PORT = 1080
+ADVERTISED_PORT = 1080
 MAX_CONNECTIONS = 128
+TESTING_IGNORE_KEYS = ACCEPT_FROM;
 
-[transport-https]
-PORT = 4433
-CRYPTO_INIT = NORMAL
-KEY_FILE = https.key
-CERT_FILE = https.cert
+[transport-https_client]
 MAX_CONNECTIONS = 128
+TESTING_IGNORE_KEYS = ACCEPT_FROM;
+
+[transport-https_server]
+PORT = 4433
+ADVERTISED_PORT = 4433
+CRYPTO_INIT = NORMAL
+KEY_FILE = $SERVICEHOME/https.key
+CERT_FILE = $SERVICEHOME/https.cert
+MAX_CONNECTIONS = 128
+TESTING_IGNORE_KEYS = ACCEPT_FROM;
 
 [transport-wlan]
 # Name of the interface in monitor mode (typically monX)
 INTERFACE = mon0
 # Real hardware, no testing
 TESTMODE = 0
-
+TESTING_IGNORE_KEYS = ACCEPT_FROM;

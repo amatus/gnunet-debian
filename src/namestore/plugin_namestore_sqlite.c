@@ -199,10 +199,9 @@ database_setup (struct Plugin *plugin)
   if (GNUNET_OK !=
       GNUNET_CONFIGURATION_get_value_filename (plugin->cfg, "namestore-sqlite",
                                                "FILENAME", &afsdir))
-    {
-    LOG (GNUNET_ERROR_TYPE_ERROR, 
-	 _ ("Option `%s' in section `%s' missing in configuration!\n"),
-	 "FILENAME", "namestore-sqlite");
+  {
+    GNUNET_log_config_missing (GNUNET_ERROR_TYPE_ERROR,
+			       "namestore-sqlite", "FILENAME");
     return GNUNET_SYSERR;
   }
   if (GNUNET_OK != GNUNET_DISK_file_test (afsdir))
@@ -214,13 +213,8 @@ database_setup (struct Plugin *plugin)
       return GNUNET_SYSERR;
     }
   }
-#ifdef ENABLE_NLS
-  plugin->fn =
-      GNUNET_STRINGS_to_utf8 (afsdir, strlen (afsdir), nl_langinfo (CODESET));
-#else
-  plugin->fn = GNUNET_STRINGS_to_utf8 (afsdir, strlen (afsdir), "UTF-8");       /* good luck */
-#endif
-  GNUNET_free (afsdir);
+  /* afsdir should be UTF-8-encoded. If it isn't, it's a bug */
+  plugin->fn = afsdir;
 
   /* Open database and precompile statements */
   if (sqlite3_open (plugin->fn, &plugin->dbh) != SQLITE_OK)
@@ -288,10 +282,9 @@ database_setup (struct Plugin *plugin)
 
   create_indices (plugin->dbh);
 
-#define ALL "zone_key, record_name, record_count, record_data, block_expiration_time, signature"
   if ((sq_prepare
        (plugin->dbh,
-        "INSERT INTO ns091records (" ALL ", zone_delegation, zone_hash, record_name_hash, rvalue) VALUES "
+        "INSERT INTO ns091records (zone_key, record_name, record_count, record_data, block_expiration_time, signature, zone_delegation, zone_hash, record_name_hash, rvalue) VALUES "
 	"(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         &plugin->put_records) != SQLITE_OK) ||
       (sq_prepare
@@ -300,27 +293,27 @@ database_setup (struct Plugin *plugin)
         &plugin->remove_records) != SQLITE_OK) ||
       (sq_prepare
        (plugin->dbh,
-        "SELECT " ALL
+        "SELECT zone_key, record_name, record_count, record_data, block_expiration_time, signature"
 	" FROM ns091records WHERE zone_hash=? AND record_name_hash=? ORDER BY rvalue LIMIT 1 OFFSET ?",
         &plugin->iterate_records) != SQLITE_OK) ||
       (sq_prepare
        (plugin->dbh,
-        "SELECT " ALL
+        "SELECT zone_key, record_name, record_count, record_data, block_expiration_time, signature" 
 	" FROM ns091records WHERE zone_hash=? ORDER BY rvalue  LIMIT 1 OFFSET ?",
         &plugin->iterate_by_zone) != SQLITE_OK) ||
       (sq_prepare
        (plugin->dbh,
-        "SELECT " ALL 
+        "SELECT zone_key, record_name, record_count, record_data, block_expiration_time, signature" 
 	" FROM ns091records WHERE record_name_hash=? ORDER BY rvalue LIMIT 1 OFFSET ?",
         &plugin->iterate_by_name) != SQLITE_OK) ||
       (sq_prepare
 	(plugin->dbh,
-        "SELECT " ALL
+        "SELECT zone_key, record_name, record_count, record_data, block_expiration_time, signature" 
 	" FROM ns091records ORDER BY rvalue LIMIT 1 OFFSET ?",
         &plugin->iterate_all) != SQLITE_OK) ||
       (sq_prepare
 	(plugin->dbh,
-        "SELECT " ALL
+        "SELECT zone_key, record_name, record_count, record_data, block_expiration_time, signature"
 	" FROM ns091records WHERE zone_hash=? AND zone_delegation=?",
         &plugin->zone_to_name) != SQLITE_OK) ||
       (sq_prepare
@@ -331,7 +324,6 @@ database_setup (struct Plugin *plugin)
     LOG_SQLITE (plugin,GNUNET_ERROR_TYPE_ERROR, "precompiling");
     return GNUNET_SYSERR;
   }
-#undef ALL
   return GNUNET_OK;
 }
 
@@ -405,6 +397,7 @@ namestore_sqlite_remove_records (void *cls,
   struct GNUNET_CRYPTO_ShortHashCode nh;
   size_t name_len;
   int n;
+
   name_len = strlen (name);
   GNUNET_CRYPTO_short_hash (name, name_len, &nh);
 
@@ -591,6 +584,13 @@ get_record_and_call_iterator (struct Plugin *plugin,
       GNUNET_break (0);
       ret = GNUNET_SYSERR;
     }
+    else if (record_count > 64 * 1024)
+    {
+      /* sanity check, don't stack allocate far too much just
+	 because database might contain a large value here */
+      GNUNET_break (0);
+      ret = GNUNET_SYSERR;
+    } 
     else
     {
       struct GNUNET_NAMESTORE_RecordData rd[record_count];
@@ -601,7 +601,6 @@ get_record_and_call_iterator (struct Plugin *plugin,
       {
 	GNUNET_break (0);
 	ret = GNUNET_SYSERR;
-	record_count = 0;
       }
       else
       {
@@ -746,7 +745,6 @@ namestore_sqlite_zone_to_name (void *cls,
 		  "sqlite3_reset");
     return GNUNET_SYSERR;
   }      
-
   return get_record_and_call_iterator (plugin, stmt, iter, iter_cls);
 }
 

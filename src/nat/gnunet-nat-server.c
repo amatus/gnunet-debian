@@ -313,11 +313,18 @@ main (int argc, char *const argv[])
     GNUNET_GETOPT_OPTION_END
   };
 
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+
   if (GNUNET_OK !=
       GNUNET_PROGRAM_run (argc, argv, "gnunet-nat-server [options] PORT",
                           _("GNUnet NAT traversal test helper daemon"), options,
                           &run, NULL))
+  {
+    GNUNET_free ((void*) argv);
     return 1;
+  }
+  GNUNET_free ((void*) argv);
   return 0;
 }
 

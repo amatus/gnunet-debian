@@ -76,7 +76,7 @@ shutdown_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 static void *
 progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
 {
-  char *s;
+  const char *s;
 
   switch (info->status)
   {
@@ -85,11 +85,10 @@ progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
   case GNUNET_FS_STATUS_UNINDEX_PROGRESS:
     if (verbose)
     {
-      s = GNUNET_STRINGS_relative_time_to_string (info->value.unindex.eta);
+      s = GNUNET_STRINGS_relative_time_to_string (info->value.unindex.eta, GNUNET_YES);
       FPRINTF (stdout, _("Unindexing at %llu/%llu (%s remaining)\n"),
                (unsigned long long) info->value.unindex.completed,
                (unsigned long long) info->value.unindex.size, s);
-      GNUNET_free (s);
     }
     break;
   case GNUNET_FS_STATUS_UNINDEX_ERROR:
@@ -170,11 +169,17 @@ main (int argc, char *const *argv)
      0, &GNUNET_GETOPT_set_one, &verbose},
     GNUNET_GETOPT_OPTION_END
   };
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "gnunet-unindex [OPTIONS] FILENAME",
-                              gettext_noop
-                              ("Unindex a file that was previously indexed with gnunet-publish."),
-                              options, &run, NULL)) ? ret : 1;
+
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+
+  ret = (GNUNET_OK ==
+	 GNUNET_PROGRAM_run (argc, argv, "gnunet-unindex [OPTIONS] FILENAME",
+			     gettext_noop
+			     ("Unindex a file that was previously indexed with gnunet-publish."),
+			     options, &run, NULL)) ? ret : 1;
+  GNUNET_free ((void*) argv);
+  return ret;
 }
 
 /* end of gnunet-unindex.c */

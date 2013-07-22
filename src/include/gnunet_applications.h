@@ -50,6 +50,10 @@ extern "C"
  */
 #define GNUNET_APPLICATION_TYPE_INTERNET_RESOLVER 2
 
+/**
+ * Transfer of blocks for non-anonymmous file-sharing.
+ */
+#define GNUNET_APPLICATION_TYPE_FS_BLOCK_TRANSFER 3
 
 /**
  * Internet IPv4 gateway (any TCP/UDP/ICMP).
@@ -60,6 +64,17 @@ extern "C"
  * Internet IPv6 gateway (any TCP/UDP/ICMP).
  */
 #define GNUNET_APPLICATION_TYPE_IPV6_GATEWAY 17
+
+/**
+ * Internet exit regex prefix. Consisting of application ID, followed by version
+ * and padding.
+ */
+#define GNUNET_APPLICATION_TYPE_EXIT_REGEX_PREFIX "GNUNET-VPN-VER-0001-"
+
+/**
+ * Consensus.
+ */
+#define GNUNET_APPLICATION_TYPE_CONSENSUS 18
 
 
 #if 0                           /* keep Emacsens' auto-indent happy */

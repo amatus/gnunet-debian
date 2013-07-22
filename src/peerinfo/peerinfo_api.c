@@ -131,9 +131,11 @@ struct GNUNET_PEERINFO_IteratorContext
   int have_peer;
 
   /**
-   * Are we now receiving?
+   * Set to GNUNET_YES if we are currently receiving replies from the
+   * service.
    */
-  int in_receive;
+  int request_transmitted;
+
 };
 
 
@@ -183,8 +185,7 @@ struct GNUNET_PEERINFO_Handle
   GNUNET_SCHEDULER_TaskIdentifier r_task;
 
   /**
-   * Set to GNUNET_YES if we are currently receiving replies from the
-   * service.
+   * Are we now receiving?
    */
   int in_receive;
 
@@ -227,8 +228,8 @@ GNUNET_PEERINFO_disconnect (struct GNUNET_PEERINFO_Handle *h)
 
   while (NULL != (ic = h->ic_head))
   {
-    GNUNET_break (GNUNET_YES == ic->in_receive);
-    ic->in_receive = GNUNET_NO;
+    GNUNET_break (GNUNET_YES == ic->request_transmitted);
+    ic->request_transmitted = GNUNET_NO;
     GNUNET_PEERINFO_iterate_cancel (ic);
   }
   while (NULL != (ac = h->ac_head))
@@ -393,8 +394,6 @@ trigger_transmit (struct GNUNET_PEERINFO_Handle *h)
     return; /* no requests queued */
   if (NULL != h->th)
     return; /* request already pending */
-  if (GNUNET_YES == h->in_receive)
-    return; /* still reading replies from last request */
   if (NULL == h->client)
   {
     /* disconnected, try to reconnect */
@@ -490,29 +489,49 @@ peerinfo_handler (void *cls, const struct GNUNET_MessageHeader *msg)
   void *cb_cls;
   uint16_t ms;
 
-  GNUNET_assert (NULL != ic);
   h->in_receive = GNUNET_NO;
-  ic->in_receive = GNUNET_NO;
-  cb = ic->callback;
-  cb_cls = ic->callback_cls;
   if (NULL == msg)
   {
     /* peerinfo service died, signal error */
-    GNUNET_PEERINFO_iterate_cancel (ic);
+    if (NULL != ic)
+    {
+      cb = ic->callback;
+      cb_cls = ic->callback_cls;
+      GNUNET_PEERINFO_iterate_cancel (ic);
+    }
+    else
+    {
+      cb = NULL;
+    }
     reconnect (h);
     if (NULL != cb)
       cb (cb_cls, NULL, NULL,
 	  _("Failed to receive response from `PEERINFO' service."));
     return;
   }
-
+  if (NULL == ic)
+  {
+    /* didn't expect a response, reconnect */
+    reconnect (h);
+    return;
+  }
+  ic->request_transmitted = GNUNET_NO;
+  cb = ic->callback;
+  cb_cls = ic->callback_cls;
   if (GNUNET_MESSAGE_TYPE_PEERINFO_INFO_END == ntohs (msg->type))
   {
     /* normal end of list of peers, signal end, process next pending request */
     LOG (GNUNET_ERROR_TYPE_DEBUG,
          "Received end of list of peers from `%s' service\n", "PEERINFO");
-    GNUNET_PEERINFO_iterate_cancel (ic);   
+    GNUNET_PEERINFO_iterate_cancel (ic);
     trigger_transmit (h);
+    if ( (GNUNET_NO == h->in_receive) &&
+	 (NULL != h->ic_head) )
+    {
+      h->in_receive = GNUNET_YES;
+      GNUNET_CLIENT_receive (h->client, &peerinfo_handler, h,
+			     GNUNET_TIME_absolute_get_remaining (h->ic_head->timeout));
+    }    
     if (NULL != cb)
       cb (cb_cls, NULL, NULL, NULL);
     return;
@@ -595,7 +614,6 @@ peerinfo_handler (void *cls, const struct GNUNET_MessageHeader *msg)
        (hello == NULL) ? 0 : (unsigned int) GNUNET_HELLO_size (hello), "HELLO",
        GNUNET_i2s (&im->peer), "PEERINFO");
   h->in_receive = GNUNET_YES;
-  ic->in_receive = GNUNET_YES;
   GNUNET_CLIENT_receive (h->client, &peerinfo_handler, h,
                          GNUNET_TIME_absolute_get_remaining (ic->timeout));
   if (NULL != cb)
@@ -631,7 +649,7 @@ iterator_start_receive (void *cls, const char *emsg)
   }
   LOG (GNUNET_ERROR_TYPE_DEBUG, "Waiting for response from `%s' service.\n",
        "PEERINFO");
-  ic->in_receive = GNUNET_YES;
+  ic->request_transmitted = GNUNET_YES;
   if (GNUNET_NO == h->in_receive)
   {
     h->in_receive = GNUNET_YES;
@@ -665,10 +683,10 @@ signal_timeout (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 
 
 /**
- * Call a method for each known matching host and change its trust
- * value.  The callback method will be invoked once for each matching
- * host and then finally once with a NULL pointer.  After that final
- * invocation, the iterator context must no longer be used.
+ * Call a method for each known matching host.  The callback method
+ * will be invoked once for each matching host and then finally once
+ * with a NULL pointer.  After that final invocation, the iterator
+ * context must no longer be used.
  *
  * Instead of calling this function with 'peer == NULL' it is often
  * better to use 'GNUNET_PEERINFO_notify'.
@@ -755,7 +773,7 @@ GNUNET_PEERINFO_iterate_cancel (struct GNUNET_PEERINFO_IteratorContext *ic)
     ic->timeout_task = GNUNET_SCHEDULER_NO_TASK;
   }
   ic->callback = NULL;
-  if (GNUNET_YES == ic->in_receive)
+  if (GNUNET_YES == ic->request_transmitted)
     return;                     /* need to finish processing */
   GNUNET_CONTAINER_DLL_remove (h->ic_head,
 			       h->ic_tail,

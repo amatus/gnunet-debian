@@ -35,6 +35,7 @@
 #include "gnunet_statistics_service.h"
 #include "gnunet_constants.h"
 #include "gnunet_tun_lib.h"
+#include "gnunet_regex_lib.h"
 #include "vpn.h"
 #include "exit.h"
 
@@ -62,7 +63,7 @@ struct DestinationEntry
    * Key under which this entry is in the 'destination_map' (only valid
    * if 'heap_node != NULL').
    */
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
 
   /**
    * Pre-allocated tunnel for this destination, or NULL for none.
@@ -91,7 +92,7 @@ struct DestinationEntry
       /**
        * The description of the service (only used for service tunnels).
        */
-      GNUNET_HashCode service_descriptor;
+      struct GNUNET_HashCode service_descriptor;
 
       /**
        * Peer offering the service.
@@ -371,7 +372,7 @@ static unsigned long long max_tunnel_mappings;
 static void
 get_destination_key_from_ip (int af,
 			     const void *address,
-			     GNUNET_HashCode *key)
+			     struct GNUNET_HashCode *key)
 {
   switch (af)
   {
@@ -411,11 +412,11 @@ get_tunnel_key_from_ips (int af,
 			 uint16_t source_port,
 			 const void *destination_ip,
 			 uint16_t destination_port,
-			 GNUNET_HashCode *key)
+			 struct GNUNET_HashCode *key)
 {
   char *off;
 
-  memset (key, 0, sizeof (GNUNET_HashCode));
+  memset (key, 0, sizeof (struct GNUNET_HashCode));
   /* the GNUnet hashmap only uses the first sizeof(unsigned int) of the hash,
      so we put the ports in there (and hope for few collisions) */
   off = (char*) key;
@@ -501,7 +502,7 @@ send_client_reply (struct GNUNET_SERVER_Client *client,
 static void
 free_tunnel_state (struct TunnelState *ts)
 {
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
   struct TunnelMessageQueueEntry *tnq;
   struct GNUNET_MESH_Tunnel *tunnel;
 
@@ -689,7 +690,6 @@ send_to_peer_notify_callback (void *cls, size_t size, void *buf)
   if (NULL != (tnq = ts->tmq_head))
     ts->th = GNUNET_MESH_notify_transmit_ready (ts->tunnel, 
 						GNUNET_NO /* cork */, 
-						42 /* priority */,
 						GNUNET_TIME_UNIT_FOREVER_REL,
 						NULL, 
 						tnq->len,
@@ -742,7 +742,6 @@ send_to_tunnel (struct TunnelMessageQueueEntry *tnq,
   if (NULL == ts->th)
     ts->th = GNUNET_MESH_notify_transmit_ready (ts->tunnel, 
 						GNUNET_NO /* cork */,
-						42 /* priority */,
 						GNUNET_TIME_UNIT_FOREVER_REL,
 						NULL, 
 						tnq->len,
@@ -809,27 +808,45 @@ create_tunnel_to_destination (struct DestinationEntry *de,
   }
   else
   {
+    char *policy;
+
     switch (de->details.exit_destination.af)
     {
     case AF_INET:
-      GNUNET_MESH_peer_request_connect_by_type (ts->tunnel,
-						GNUNET_APPLICATION_TYPE_IPV4_GATEWAY);
-      GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
-		  "Creating tunnel to exit peer for %s\n",
-		  "IPv4");
-     break;
-    case AF_INET6:
-      GNUNET_MESH_peer_request_connect_by_type (ts->tunnel,
-						GNUNET_APPLICATION_TYPE_IPV6_GATEWAY);
-      GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
-		  "Creating tunnel to exit peer for %s\n",
-		  "IPv6");
+    {
+      char address[GNUNET_REGEX_IPV4_REGEXLEN];
+      GNUNET_REGEX_ipv4toregex (&de->details.exit_destination.ip.v4,
+                                "255.255.255.255", address);
+      GNUNET_asprintf (&policy, "%s%s%s",
+                       GNUNET_APPLICATION_TYPE_EXIT_REGEX_PREFIX,
+                       "4",
+                       address);
       break;
+    }
+    case AF_INET6:
+    {
+      char address[GNUNET_REGEX_IPV6_REGEXLEN];
+      GNUNET_REGEX_ipv6toregex (&de->details.exit_destination.ip.v6,
+                                128, address);
+      GNUNET_asprintf (&policy, "%s%s%s",
+                       GNUNET_APPLICATION_TYPE_EXIT_REGEX_PREFIX,
+                       "6",
+                       address);
+      break;
+    }
     default:
       GNUNET_assert (0);
       break;
     }
-  }  
+
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Requesting connect by string: %s\n", policy);
+
+    GNUNET_MESH_peer_request_connect_by_string (ts->tunnel, policy);
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+                "Creating tunnel to exit peer for policy `%s'\n",
+                policy);
+    GNUNET_free (policy);
+  }
   return ts;
 }
 
@@ -872,7 +889,7 @@ route_packet (struct DestinationEntry *destination,
 	      const void *payload,
 	      size_t payload_length)
 {
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
   struct TunnelState *ts;
   struct TunnelMessageQueueEntry *tnq;
   size_t alen;
@@ -1510,7 +1527,7 @@ message_token (void *cls GNUNET_UNUSED, void *client GNUNET_UNUSED,
 {
   const struct GNUNET_TUN_Layer2PacketHeader *tun;
   size_t mlen;
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
   struct DestinationEntry *de;
 
   GNUNET_STATISTICS_update (stats,
@@ -2336,7 +2353,7 @@ allocate_v4_address (struct in_addr *v4)
   struct in_addr addr;
   struct in_addr mask;
   struct in_addr rnd;
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
   unsigned int tries;
 
   GNUNET_assert (1 == inet_pton (AF_INET, ipv4addr, &addr));
@@ -2387,7 +2404,7 @@ allocate_v6_address (struct in6_addr *v6)
   struct in6_addr mask;
   struct in6_addr rnd;
   int i;
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
   unsigned int tries;
 
   GNUNET_assert (1 == inet_pton (AF_INET6, ipv6addr, &addr));
@@ -2564,7 +2581,7 @@ service_redirect_to_ip (void *cls GNUNET_UNUSED, struct GNUNET_SERVER_Client *cl
   struct in6_addr v6;
   void *addr;
   struct DestinationEntry *de;
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
   struct TunnelState *ts;
   
   /* validate and parse request */
@@ -2703,7 +2720,7 @@ service_redirect_to_service (void *cls GNUNET_UNUSED, struct GNUNET_SERVER_Clien
   struct in6_addr v6;
   void *addr;
   struct DestinationEntry *de;
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
   struct TunnelState *ts;
   
   /*  parse request */
@@ -2835,7 +2852,7 @@ tunnel_cleaner (void *cls, const struct GNUNET_MESH_Tunnel *tunnel, void *tunnel
  */
 static int
 cleanup_destination (void *cls,
-		     const GNUNET_HashCode *key,
+		     const struct GNUNET_HashCode *key,
 		     void *value)
 {
   struct DestinationEntry *de = value;
@@ -2855,7 +2872,7 @@ cleanup_destination (void *cls,
  */
 static int
 cleanup_tunnel (void *cls,
-		const GNUNET_HashCode *key,
+		const struct GNUNET_HashCode *key,
 		void *value)
 {
   struct TunnelState *ts = value;
@@ -2940,7 +2957,7 @@ cleanup (void *cls GNUNET_UNUSED,
  */
 static int
 cleanup_tunnel_client (void *cls,
-		       const GNUNET_HashCode *key,
+		       const struct GNUNET_HashCode *key,
 		       void *value)
 {
   struct GNUNET_SERVER_Client *client = cls;
@@ -2965,7 +2982,7 @@ cleanup_tunnel_client (void *cls,
  */
 static int
 cleanup_destination_client (void *cls,
-			    const GNUNET_HashCode *key,
+			    const struct GNUNET_HashCode *key,
 			    void *value)
 {
   struct GNUNET_SERVER_Client *client = cls;
@@ -3005,31 +3022,6 @@ client_disconnect (void *cls, struct GNUNET_SERVER_Client *client)
 
 
 /**
- * Test if the given AF is supported by this system.
- * 
- * @param af to test
- * @return GNUNET_OK if the AF is supported
- */
-static int
-test_af (int af)
-{
-  int s;
-
-  s = socket (af, SOCK_STREAM, 0);
-  if (-1 == s)
-  {
-    if (EAFNOSUPPORT == errno)
-      return GNUNET_NO;
-    GNUNET_log_strerror (GNUNET_ERROR_TYPE_ERROR,
-			 "socket");
-    return GNUNET_SYSERR;
-  }
-  close (s);
-  return GNUNET_OK;
-}
-
-
-/**
  * Main function that will be run by the scheduler.
  *
  * @param cls closure
@@ -3065,16 +3057,21 @@ run (void *cls,
   char *ipv4mask;
   struct in_addr v4;
   struct in6_addr v6;
+  char *binary;
+
+  binary = GNUNET_OS_get_libexec_binary_path ("gnunet-helper-vpn");
 
   if (GNUNET_YES !=
-      GNUNET_OS_check_helper_binary ("gnunet-helper-vpn"))
+      GNUNET_OS_check_helper_binary (binary))
   {
     fprintf (stderr,
 	     "`%s' is not SUID, refusing to run.\n",
 	     "gnunet-helper-vpn");
+    GNUNET_free (binary);
     global_ret = 1;
     return;
   }
+  GNUNET_free (binary);
   cfg = cfg_;
   stats = GNUNET_STATISTICS_create ("vpn", cfg);
   if (GNUNET_OK !=
@@ -3086,9 +3083,9 @@ run (void *cls,
 					     &max_tunnel_mappings))
     max_tunnel_mappings = 200;
 
-  destination_map = GNUNET_CONTAINER_multihashmap_create (max_destination_mappings * 2);
+  destination_map = GNUNET_CONTAINER_multihashmap_create (max_destination_mappings * 2, GNUNET_NO);
   destination_heap = GNUNET_CONTAINER_heap_create (GNUNET_CONTAINER_HEAP_ORDER_MIN);
-  tunnel_map = GNUNET_CONTAINER_multihashmap_create (max_tunnel_mappings * 2);
+  tunnel_map = GNUNET_CONTAINER_multihashmap_create (max_tunnel_mappings * 2, GNUNET_NO);
   tunnel_heap = GNUNET_CONTAINER_heap_create (GNUNET_CONTAINER_HEAP_ORDER_MIN);
 
 
@@ -3102,7 +3099,7 @@ run (void *cls,
     return;
   }
   vpn_argv[1] = ifname;
-  if (GNUNET_OK == test_af (AF_INET6))
+  if (GNUNET_OK == GNUNET_NETWORK_test_pf (PF_INET6))
   {
     if ( (GNUNET_SYSERR ==
 	  GNUNET_CONFIGURATION_get_value_string (cfg, "vpn", "IPV6ADDR",
@@ -3142,7 +3139,7 @@ run (void *cls,
     vpn_argv[2] = GNUNET_strdup ("-");
     vpn_argv[3] = GNUNET_strdup ("-");
   }
-  if (GNUNET_OK == test_af (AF_INET))
+  if (GNUNET_OK == GNUNET_NETWORK_test_pf (PF_INET))
   {
     if ( (GNUNET_SYSERR ==
 	  GNUNET_CONFIGURATION_get_value_string (cfg, "vpn", "IPV4ADDR",
@@ -3177,13 +3174,14 @@ run (void *cls,
   vpn_argv[6] = NULL;
 
   mesh_handle =
-    GNUNET_MESH_connect (cfg_, 42 /* queue length */, NULL, 
+    GNUNET_MESH_connect (cfg_, NULL, 
 			 &inbound_tunnel_cb, 
 			 &tunnel_cleaner, 
 			 mesh_handlers,
 			 types);
-  helper_handle = GNUNET_HELPER_start ("gnunet-helper-vpn", vpn_argv,
-				       &message_token, NULL);
+  helper_handle = GNUNET_HELPER_start (GNUNET_NO,
+				       "gnunet-helper-vpn", vpn_argv,
+				       &message_token, NULL, NULL);
   nc = GNUNET_SERVER_notification_context_create (server, 1);
   GNUNET_SERVER_add_handlers (server, service_handlers);
   GNUNET_SERVER_disconnect_notify (server, &client_disconnect, NULL);

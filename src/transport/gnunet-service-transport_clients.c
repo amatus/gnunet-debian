@@ -30,8 +30,10 @@
 #include "gnunet-service-transport_neighbours.h"
 #include "gnunet-service-transport_plugins.h"
 #include "gnunet-service-transport_validation.h"
+#include "gnunet-service-transport_manipulation.h"
 #include "gnunet-service-transport.h"
 #include "transport.h"
+
 
 /**
  * How many messages can we have pending for a given client process
@@ -115,6 +117,26 @@ struct TransportClient
   int send_payload;
 };
 
+/**
+ * Context for address to string operations
+ */
+struct AddressToStringContext
+{
+  /**
+   * This is a doubly-linked list.
+   */
+  struct AddressToStringContext *next;
+
+  /**
+   * This is a doubly-linked list.
+   */
+  struct AddressToStringContext *prev;
+
+  /**
+   * Transmission context
+   */
+  struct GNUNET_SERVER_TransmitContext* tc;
+};
 
 /**
  * Client monitoring changes of active addresses of our neighbours.
@@ -154,6 +176,16 @@ static struct TransportClient *clients_head;
  * Tail of linked list of all clients to this service.
  */
 static struct TransportClient *clients_tail;
+
+/**
+ * Head of linked list of all pending address iterations
+ */
+struct AddressToStringContext *a2s_head;
+
+/**
+ * Tail of linked list of all pending address iterations
+ */
+struct AddressToStringContext *a2s_tail;
 
 /**
  * Head of linked list of monitoring clients.
@@ -250,6 +282,7 @@ setup_monitoring_client (struct GNUNET_SERVER_Client *client,
                          struct GNUNET_PeerIdentity *peer)
 {
   struct MonitoringClient *mc;
+  static struct GNUNET_PeerIdentity all_zeros;
 
   GNUNET_assert (lookup_monitoring_client (client) == NULL);
   mc = GNUNET_malloc (sizeof (struct MonitoringClient));
@@ -260,9 +293,13 @@ setup_monitoring_client (struct GNUNET_SERVER_Client *client,
                                mc);
   GNUNET_SERVER_notification_context_add (nc, client);
 
-  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
-              "Client %p started monitoring of the peer `%s'\n",
-              mc, GNUNET_i2s (peer));
+  if (0 != memcmp (peer, &all_zeros, sizeof (struct GNUNET_PeerIdentity)))
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+                "Client %p started monitoring of the peer `%s'\n",
+                mc, GNUNET_i2s (peer));
+  else
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+              "Client %p started monitoring all peers\n", mc);
   return mc;
 }
 
@@ -431,13 +468,17 @@ client_disconnect_notification (void *cls, struct GNUNET_SERVER_Client *client)
  * @param ats performance data
  * @param ats_count number of entries in ats (excluding 0-termination)
  * @param address the address
+ * @param bandwidth_in inbound bandwidth in NBO
+ * @param bandwidth_out outbound bandwidth in NBO
  */
 static void
 notify_client_about_neighbour (void *cls,
                                const struct GNUNET_PeerIdentity *peer,
                                const struct GNUNET_ATS_Information *ats,
                                uint32_t ats_count,
-                               const struct GNUNET_HELLO_Address *address)
+                               const struct GNUNET_HELLO_Address *address,
+                               struct GNUNET_BANDWIDTH_Value32NBO bandwidth_in,
+                               struct GNUNET_BANDWIDTH_Value32NBO bandwidth_out)
 {
   struct TransportClient *tc = cls;
   struct ConnectInfoMessage *cim;
@@ -453,6 +494,8 @@ notify_client_about_neighbour (void *cls,
   cim->header.type = htons (GNUNET_MESSAGE_TYPE_TRANSPORT_CONNECT);
   cim->ats_count = htonl (ats_count);
   cim->id = *peer;
+  cim->quota_in = bandwidth_in;
+  cim->quota_out = bandwidth_out;
   ap = (struct GNUNET_ATS_Information *) &cim[1];
   memcpy (ap, ats, ats_count * sizeof (struct GNUNET_ATS_Information));
   unicast (tc, &cim->header, GNUNET_NO);
@@ -553,15 +596,28 @@ struct SendTransmitContinuationContext
  *
  * @param cls closure
  * @param success GNUNET_OK on success, GNUNET_NO on failure, GNUNET_SYSERR if we're not connected
+ * @param bytes_payload bytes payload sent
+ * @param bytes_on_wire bytes sent on wire
  */
 static void
-handle_send_transmit_continuation (void *cls, int success)
+handle_send_transmit_continuation (void *cls, int success,
+                                   size_t bytes_payload, size_t bytes_on_wire)
 {
   struct SendTransmitContinuationContext *stcc = cls;
   struct SendOkMessage send_ok_msg;
 
+  //GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "Payload: %u, On wire %u result: %i\n", bytes_payload, bytes_on_wire, success);
+  /*
+  if (GNUNET_OK == success)
+    GNUNET_assert (bytes_on_wire >= bytes_payload);
+
+  else
+    GNUNET_assert (bytes_on_wire <= bytes_payload);
+*/
   send_ok_msg.header.size = htons (sizeof (send_ok_msg));
   send_ok_msg.header.type = htons (GNUNET_MESSAGE_TYPE_TRANSPORT_SEND_OK);
+  send_ok_msg.bytes_msg = htonl (bytes_payload);
+  send_ok_msg.bytes_physical = htonl (bytes_on_wire);
   send_ok_msg.success = htonl (success);
   send_ok_msg.latency =
       GNUNET_TIME_relative_hton (GNUNET_TIME_UNIT_FOREVER_REL);
@@ -638,7 +694,7 @@ clients_handle_send (void *cls, struct GNUNET_SERVER_Client *client,
   stcc->target = obm->peer;
   stcc->client = client;
   GNUNET_SERVER_client_keep (client);
-  GST_neighbours_send (&obm->peer, obmm, msize,
+  GST_manipulation_send (&obm->peer, obmm, msize,
                        GNUNET_TIME_relative_ntoh (obm->timeout),
                        &handle_send_transmit_continuation, stcc);
 }
@@ -700,16 +756,17 @@ clients_handle_request_connect (void *cls, struct GNUNET_SERVER_Client *client,
 static void
 transmit_address_to_client (void *cls, const char *buf)
 {
-  struct GNUNET_SERVER_TransmitContext *tc = cls;
-
+  struct AddressToStringContext *actx = cls;
   if (NULL == buf)
   {
-    GNUNET_SERVER_transmit_context_append_data (tc, NULL, 0,
+    GNUNET_SERVER_transmit_context_append_data (actx->tc, NULL, 0,
                                                 GNUNET_MESSAGE_TYPE_TRANSPORT_ADDRESS_TO_STRING_REPLY);
-    GNUNET_SERVER_transmit_context_run (tc, GNUNET_TIME_UNIT_FOREVER_REL);
+    GNUNET_SERVER_transmit_context_run (actx->tc, GNUNET_TIME_UNIT_FOREVER_REL);
+    GNUNET_CONTAINER_DLL_remove (a2s_head, a2s_tail, actx);
+    GNUNET_free (actx);
     return;
   }
-  GNUNET_SERVER_transmit_context_append_data (tc, buf, strlen (buf) + 1,
+  GNUNET_SERVER_transmit_context_append_data (actx->tc, buf, strlen (buf) + 1,
                                               GNUNET_MESSAGE_TYPE_TRANSPORT_ADDRESS_TO_STRING_REPLY);
 }
 
@@ -733,6 +790,7 @@ clients_handle_address_to_string (void *cls,
   uint32_t address_len;
   uint16_t size;
   struct GNUNET_SERVER_TransmitContext *tc;
+  struct AddressToStringContext *actx;
   struct GNUNET_TIME_Relative rtimeout;
   int32_t numeric;
 
@@ -763,7 +821,7 @@ clients_handle_address_to_string (void *cls,
   rtimeout = GNUNET_TIME_relative_ntoh (alum->timeout);
   numeric = ntohs (alum->numeric_only);
   tc = GNUNET_SERVER_transmit_context_create (client);
-  papi = GST_plugins_find (plugin_name);
+  papi = GST_plugins_printer_find (plugin_name);
   if (NULL == papi)
   {
     GNUNET_SERVER_transmit_context_append_data (tc, NULL, 0,
@@ -771,10 +829,13 @@ clients_handle_address_to_string (void *cls,
     GNUNET_SERVER_transmit_context_run (tc, rtimeout);
     return;
   }
+  actx = GNUNET_malloc (sizeof (struct AddressToStringContext));
+  actx->tc = tc;
+  GNUNET_CONTAINER_DLL_insert (a2s_head, a2s_tail, actx);
   GNUNET_SERVER_disable_receive_done_warning (client);
   papi->address_pretty_printer (papi->cls, plugin_name, address, address_len,
                                 numeric, rtimeout, &transmit_address_to_client,
-                                tc);
+                                actx);
 }
 
 
@@ -832,11 +893,15 @@ compose_address_iterate_response_message (const struct GNUNET_PeerIdentity
  * @param ats performance data
  * @param ats_count number of entries in ats (excluding 0-termination)
  * @param address the address
+ * @param bandwidth_in inbound quota in NBO
+ * @param bandwidth_out outbound quota in NBO
  */
 static void
 output_address (void *cls, const struct GNUNET_PeerIdentity *peer,
                 const struct GNUNET_ATS_Information *ats, uint32_t ats_count,
-                const struct GNUNET_HELLO_Address *address)
+                const struct GNUNET_HELLO_Address *address,
+                struct GNUNET_BANDWIDTH_Value32NBO bandwidth_in,
+                struct GNUNET_BANDWIDTH_Value32NBO bandwidth_out)
 {
   struct GNUNET_SERVER_TransmitContext *tc = cls;
   struct AddressIterateResponseMessage *msg;
@@ -900,7 +965,9 @@ clients_handle_address_iterate (void *cls, struct GNUNET_SERVER_Client *client,
     /* just return one neighbour */
     address = GST_neighbour_get_current_address (&msg->peer);
     if (address != NULL)
-      output_address (tc, &msg->peer, NULL, 0, address);
+      output_address (tc, &msg->peer, NULL, 0, address,
+                      GNUNET_CONSTANTS_DEFAULT_BW_IN_OUT,
+                      GNUNET_CONSTANTS_DEFAULT_BW_IN_OUT);
   }
   if (GNUNET_YES != ntohl (msg->one_shot))
     setup_monitoring_client (client, &msg->peer);
@@ -940,6 +1007,8 @@ GST_clients_start (struct GNUNET_SERVER_Handle *server)
     {&GST_blacklist_handle_reply, NULL,
      GNUNET_MESSAGE_TYPE_TRANSPORT_BLACKLIST_REPLY,
      sizeof (struct BlacklistMessage)},
+    {&GST_manipulation_set_metric, NULL,
+     GNUNET_MESSAGE_TYPE_TRANSPORT_TRAFFIC_METRIC, 0},
     {NULL, NULL, 0, 0}
   };
   nc = GNUNET_SERVER_notification_context_create (server, 0);
@@ -955,13 +1024,21 @@ GST_clients_start (struct GNUNET_SERVER_Handle *server)
 void
 GST_clients_stop ()
 {
+  struct AddressToStringContext *cur;
+
+  while (NULL != (cur = a2s_head))
+  {
+    GNUNET_SERVER_transmit_context_destroy (cur->tc, GNUNET_NO);
+    GNUNET_CONTAINER_DLL_remove (a2s_head, a2s_tail, cur);
+    GNUNET_free (cur);
+  }
+
   if (NULL != nc)
   {
     GNUNET_SERVER_notification_context_destroy (nc);
     nc = NULL;
   }
 }
-
 
 /**
  * Broadcast the given message to all of our clients.
@@ -1018,7 +1095,6 @@ GST_clients_broadcast_address_notification (const struct GNUNET_PeerIdentity
   struct AddressIterateResponseMessage *msg;
   struct MonitoringClient *mc;
   static struct GNUNET_PeerIdentity all_zeros;
-
   msg = compose_address_iterate_response_message (peer, address);
   mc = monitoring_clients_head;
   while (mc != NULL)

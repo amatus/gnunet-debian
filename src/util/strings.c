@@ -32,6 +32,8 @@
 #include "gnunet_common.h"
 #include "gnunet_strings_lib.h"
 #include <unicase.h>
+#include <unistr.h>
+#include <uniconv.h>
 
 #define LOG(kind,...) GNUNET_log_from (kind, "util", __VA_ARGS__)
 
@@ -289,23 +291,73 @@ GNUNET_STRINGS_fancy_time_to_relative (const char *fancy_time,
     { "ms", 1},
     { "s", 1000},
     { "\"", 1000},
+    { "m", 60 * 1000},
     { "min", 60 * 1000},
     { "minutes", 60 * 1000},
     { "'", 60 * 1000},
     { "h", 60 * 60 * 1000},
     { "d", 24 * 60 * 60 * 1000},
+    { "day", 24 * 60 * 60 * 1000},
+    { "days", 24 * 60 * 60 * 1000},
     { "a", 31536000000LL /* year */ },
     { NULL, 0}
   };
   int ret;
   unsigned long long val;
 
+  if (0 == strcasecmp ("forever", fancy_time))
+  {
+    *rtime = GNUNET_TIME_UNIT_FOREVER_REL;
+    return GNUNET_OK;
+  }
   ret = convert_with_table (fancy_time,
 			    table,
 			    &val);
   rtime->rel_value = (uint64_t) val;
   return ret;
 }
+
+
+/**
+ * Convert a given fancy human-readable time to our internal
+ * representation.
+ *
+ * @param fancy_time human readable string (i.e. %Y-%m-%d %H:%M:%S)
+ * @param atime set to the absolute time
+ * @return GNUNET_OK on success, GNUNET_SYSERR on error
+ */
+int
+GNUNET_STRINGS_fancy_time_to_absolute (const char *fancy_time,
+                                       struct GNUNET_TIME_Absolute *atime)
+{
+  struct tm tv;
+  time_t t;
+
+  if (0 == strcasecmp ("end of time", fancy_time))
+  {
+    *atime = GNUNET_TIME_UNIT_FOREVER_ABS;
+    return GNUNET_OK;
+  }
+  memset (&tv, 0, sizeof (tv));
+  if ( (NULL == strptime (fancy_time, "%a %b %d %H:%M:%S %Y", &tv)) &&
+       (NULL == strptime (fancy_time, "%c", &tv)) &&
+       (NULL == strptime (fancy_time, "%Ec", &tv)) &&
+       (NULL == strptime (fancy_time, "%Y-%m-%d %H:%M:%S", &tv)) &&
+       (NULL == strptime (fancy_time, "%Y-%m-%d %H:%M", &tv)) &&
+       (NULL == strptime (fancy_time, "%x", &tv)) &&
+       (NULL == strptime (fancy_time, "%Ex", &tv)) &&
+       (NULL == strptime (fancy_time, "%Y-%m-%d", &tv)) &&
+       (NULL == strptime (fancy_time, "%Y-%m", &tv)) &&
+       (NULL == strptime (fancy_time, "%Y", &tv)) )
+    return GNUNET_SYSERR;
+  t = mktime (&tv);
+  atime->abs_value = (uint64_t) ((uint64_t) t * 1000LL);
+#if LINUX
+  atime->abs_value -= 1000LL * timezone;
+#endif
+  return GNUNET_OK;
+}
+
 
 /**
  * Convert the len characters long character sequence
@@ -319,58 +371,51 @@ char *
 GNUNET_STRINGS_conv (const char *input, size_t len, const char *input_charset, const char *output_charset)
 {
   char *ret;
+  uint8_t *u8_string;
+  char *encoded_string;
+  size_t u8_string_length;
+  size_t encoded_string_length;
 
-#if ENABLE_NLS && HAVE_ICONV
-  size_t tmpSize;
-  size_t finSize;
-  char *tmp;
-  char *itmp;
-  iconv_t cd;
-
-  cd = iconv_open (output_charset, input_charset);
-  if (cd == (iconv_t) - 1)
+  u8_string = u8_conv_from_encoding (input_charset, 
+				     iconveh_error, 
+				     input, len, 
+				     NULL, NULL, 
+				     &u8_string_length);
+  if (NULL == u8_string)
   {
-    LOG_STRERROR (GNUNET_ERROR_TYPE_WARNING, "iconv_open");
-    LOG (GNUNET_ERROR_TYPE_WARNING, _("Character sets requested were `%s'->`%s'\n"),
-         input_charset, output_charset);
-    ret = GNUNET_malloc (len + 1);
-    memcpy (ret, input, len);
-    ret[len] = '\0';
+    LOG_STRERROR (GNUNET_ERROR_TYPE_WARNING, "u8_conv_from_encoding");
+    goto fail;
+  }
+  if (0 == strcmp (output_charset, "UTF-8"))
+  {
+    ret = GNUNET_malloc (u8_string_length + 1);
+    memcpy (ret, u8_string, u8_string_length);
+    ret[u8_string_length] = '\0';
+    free (u8_string);
     return ret;
   }
-  tmpSize = 3 * len + 4;
-  tmp = GNUNET_malloc (tmpSize);
-  itmp = tmp;
-  finSize = tmpSize;
-  if (iconv (cd,
-#if FREEBSD || DARWIN || WINDOWS
-             (const char **) &input,
-#else
-             (char **) &input,
-#endif
-             &len, &itmp, &finSize) == SIZE_MAX)
+  encoded_string = u8_conv_to_encoding (output_charset, iconveh_error, 
+					u8_string, u8_string_length, 
+					NULL, NULL, 
+					&encoded_string_length);
+  free (u8_string);
+  if (NULL == encoded_string)
   {
-    LOG_STRERROR (GNUNET_ERROR_TYPE_WARNING, "iconv");
-    iconv_close (cd);
-    GNUNET_free (tmp);
-    ret = GNUNET_malloc (len + 1);
-    memcpy (ret, input, len);
-    ret[len] = '\0';
-    return ret;
+    LOG_STRERROR (GNUNET_ERROR_TYPE_WARNING, "u8_conv_to_encoding");
+    goto fail;
   }
-  ret = GNUNET_malloc (tmpSize - finSize + 1);
-  memcpy (ret, tmp, tmpSize - finSize);
-  ret[tmpSize - finSize] = '\0';
-  GNUNET_free (tmp);
-  if (0 != iconv_close (cd))
-    LOG_STRERROR (GNUNET_ERROR_TYPE_WARNING, "iconv_close");
+  ret = GNUNET_malloc (encoded_string_length + 1);
+  memcpy (ret, encoded_string, encoded_string_length);
+  ret[encoded_string_length] = '\0';
+  free (encoded_string);
   return ret;
-#else
+ fail:
+  LOG (GNUNET_ERROR_TYPE_WARNING, _("Character sets requested were `%s'->`%s'\n"),
+       "UTF-8", output_charset);
   ret = GNUNET_malloc (len + 1);
   memcpy (ret, input, len);
   ret[len] = '\0';
   return ret;
-#endif
 }
 
 
@@ -388,10 +433,11 @@ GNUNET_STRINGS_to_utf8 (const char *input, size_t len, const char *charset)
   return GNUNET_STRINGS_conv (input, len, charset, "UTF-8");
 }
 
+
 /**
  * Convert the len bytes-long UTF-8 string
  * given in input to the given charset.
-
+ *
  * @return the converted string (0-terminated),
  *  if conversion fails, a copy of the orignal
  *  string is returned.
@@ -401,6 +447,7 @@ GNUNET_STRINGS_from_utf8 (const char *input, size_t len, const char *charset)
 {
   return GNUNET_STRINGS_conv (input, len, "UTF-8", charset);
 }
+
 
 /**
  * Convert the utf-8 input string to lowercase
@@ -421,6 +468,7 @@ GNUNET_STRINGS_utf8_tolower(const char* input, char** output)
   (*output)[len] = '\0';
   free(tmp_in);
 }
+
 
 /**
  * Convert the utf-8 input string to uppercase
@@ -454,7 +502,6 @@ char *
 GNUNET_STRINGS_filename_expand (const char *fil)
 {
   char *buffer;
-
 #ifndef MINGW
   size_t len;
   size_t n;
@@ -563,67 +610,83 @@ GNUNET_STRINGS_filename_expand (const char *fil)
 
 /**
  * Give relative time in human-readable fancy format.
+ * This is one of the very few calls in the entire API that is
+ * NOT reentrant!
  *
  * @param delta time in milli seconds
+ * @param do_round are we allowed to round a bit?
  * @return time as human-readable string
  */
-char *
-GNUNET_STRINGS_relative_time_to_string (struct GNUNET_TIME_Relative delta)
+const char *
+GNUNET_STRINGS_relative_time_to_string (struct GNUNET_TIME_Relative delta,
+					int do_round)
 {
+  static char buf[128];
   const char *unit = _( /* time unit */ "ms");
-  char *ret;
   uint64_t dval = delta.rel_value;
 
-  if (delta.rel_value == GNUNET_TIME_UNIT_FOREVER_REL.rel_value)
-    return GNUNET_strdup (_("eternity"));
-  if (dval > 5 * 1000)
+  if (GNUNET_TIME_UNIT_FOREVER_REL.rel_value == delta.rel_value)
+    return _("forever");
+  if (0 == delta.rel_value)
+    return _("0 ms");
+  if ( ( (GNUNET_YES == do_round) && 
+	 (dval > 5 * 1000) ) || 
+       (0 == (dval % 1000) ))
   {
     dval = dval / 1000;
     unit = _( /* time unit */ "s");
-    if (dval > 5 * 60)
+    if ( ( (GNUNET_YES == do_round) &&
+	   (dval > 5 * 60) ) ||
+	 (0 == (dval % 60) ) )
     {
       dval = dval / 60;
       unit = _( /* time unit */ "m");
-      if (dval > 5 * 60)
+      if ( ( (GNUNET_YES == do_round) &&
+	     (dval > 5 * 60) ) || 
+	   (0 == (dval % 60) ))
       {
         dval = dval / 60;
         unit = _( /* time unit */ "h");
-        if (dval > 5 * 24)
-        {
+        if ( ( (GNUNET_YES == do_round) &&
+	       (dval > 5 * 24) ) ||
+	     (0 == (dval % 24)) )
+	{
           dval = dval / 24;
-          unit = _( /* time unit */ " days");
+	  if (1 == dval)
+	    unit = _( /* time unit */ "day");
+	  else
+	    unit = _( /* time unit */ "days");
         }
       }
     }
   }
-  GNUNET_asprintf (&ret, "%llu %s", dval, unit);
-  return ret;
+  GNUNET_snprintf (buf, sizeof (buf),
+		   "%llu %s", dval, unit);
+  return buf;
 }
 
 
 /**
- * "man ctime_r", except for GNUnet time; also, unlike ctime, the
- * return value does not include the newline character.
+ * "asctime", except for GNUnet time.
+ * This is one of the very few calls in the entire API that is
+ * NOT reentrant!
  *
  * @param t time to convert
  * @return absolute time in human-readable format
  */
-char *
+const char *
 GNUNET_STRINGS_absolute_time_to_string (struct GNUNET_TIME_Absolute t)
 {
+  static char buf[255];
   time_t tt;
-  char *ret;
+  struct tm *tp;
 
   if (t.abs_value == GNUNET_TIME_UNIT_FOREVER_ABS.abs_value)
-    return GNUNET_strdup (_("end of time"));
+    return _("end of time");
   tt = t.abs_value / 1000;
-#ifdef ctime_r
-  ret = ctime_r (&tt, GNUNET_malloc (32));
-#else
-  ret = GNUNET_strdup (ctime (&tt));
-#endif
-  ret[strlen (ret) - 1] = '\0';
-  return ret;
+  tp = gmtime (&tt);
+  strftime (buf, sizeof (buf), "%a %b %d %H:%M:%S %Y", tp);
+  return buf;
 }
 
 
@@ -919,7 +982,6 @@ GNUNET_STRINGS_path_is_absolute (const char *filename, int can_be_uri,
   }
   else
   {
-    is_uri = GNUNET_NO;
     if (r_is_uri)
       *r_is_uri = GNUNET_NO;
   }
@@ -979,7 +1041,6 @@ GNUNET_STRINGS_check_filename (const char *filename,
       return GNUNET_NO;
   return GNUNET_YES;
 }
-
 
 
 /**
@@ -1111,6 +1172,97 @@ GNUNET_STRINGS_to_address_ip (const char *addr,
   if (addr[0] == '[')
     return GNUNET_STRINGS_to_address_ipv6 (addr, addrlen, (struct sockaddr_in6 *) r_buf);
   return GNUNET_STRINGS_to_address_ipv4 (addr, addrlen, (struct sockaddr_in *) r_buf);
+}
+
+
+/**
+ * Makes a copy of argv that consists of a single memory chunk that can be
+ * freed with a single call to GNUNET_free ();
+ */
+static char *const *
+_make_continuous_arg_copy (int argc, char *const *argv)
+{
+  size_t argvsize = 0;
+  int i;
+  char **new_argv;
+  char *p;
+  for (i = 0; i < argc; i++)
+    argvsize += strlen (argv[i]) + 1 + sizeof (char *);
+  new_argv = GNUNET_malloc (argvsize + sizeof (char *));
+  p = (char *) &new_argv[argc + 1];
+  for (i = 0; i < argc; i++)
+  {
+    new_argv[i] = p;
+    strcpy (p, argv[i]);
+    p += strlen (argv[i]) + 1;
+  }
+  new_argv[argc] = NULL;
+  return (char *const *) new_argv;
+}
+
+
+/**
+ * Returns utf-8 encoded arguments.
+ * Does nothing (returns a copy of argc and argv) on any platform
+ * other than W32.
+ * Returned argv has u8argv[u8argc] == NULL.
+ * Returned argv is a single memory block, and can be freed with a single
+ *   GNUNET_free () call.
+ *
+ * @param argc argc (as given by main())
+ * @param argv argv (as given by main())
+ * @param u8argc a location to store new argc in (though it's th same as argc)
+ * @param u8argv a location to store new argv in
+ * @return GNUNET_OK on success, GNUNET_SYSERR on failure
+ */
+int
+GNUNET_STRINGS_get_utf8_args (int argc, char *const *argv, int *u8argc, char *const **u8argv)
+{
+#if WINDOWS
+  wchar_t *wcmd;
+  wchar_t **wargv;
+  int wargc;
+  int i;
+  char **split_u8argv;
+
+  wcmd = GetCommandLineW ();
+  if (NULL == wcmd)
+    return GNUNET_SYSERR;
+  wargv = CommandLineToArgvW (wcmd, &wargc);
+  if (NULL == wargv)
+    return GNUNET_SYSERR;
+
+  split_u8argv = GNUNET_malloc (argc * sizeof (char *));
+
+  for (i = 0; i < wargc; i++)
+  {
+    size_t strl;
+    /* Hopefully it will allocate us NUL-terminated strings... */
+    split_u8argv[i] = (char *) u16_to_u8 (wargv[i], wcslen (wargv[i]) + 1, NULL, &strl);
+    if (split_u8argv == NULL)
+    {
+      int j;
+      for (j = 0; j < i; j++)
+        free (split_u8argv[j]);
+      GNUNET_free (split_u8argv);
+      LocalFree (wargv);
+      return GNUNET_SYSERR;
+    }
+  }
+
+  *u8argv = _make_continuous_arg_copy (wargc, split_u8argv);
+  *u8argc = wargc;
+
+  for (i = 0; i < wargc; i++)
+    free (split_u8argv[i]);
+  free (split_u8argv);
+  return GNUNET_OK;
+#else
+  char *const *new_argv = (char *const *) _make_continuous_arg_copy (argc, argv);
+  *u8argv = new_argv;
+  *u8argc = argc;
+  return GNUNET_OK;
+#endif
 }
 
 /* end of strings.c */

@@ -2,6 +2,8 @@ INCLUDES = -I$(top_srcdir)/src/include
 
 pkgcfgdir= $(pkgdatadir)/config.d/
 
+libexecdir= $(pkglibdir)/libexec/
+
 pkgcfg_DATA = \
   arm.conf
 
@@ -23,11 +25,13 @@ libgnunetarm_la_LIBADD = \
   $(GN_LIBINTL) $(XLIB)
 libgnunetarm_la_LDFLAGS = \
   $(GN_LIB_LDFLAGS)  $(WINFLAGS) \
-  -version-info 1:1:0
+  -version-info 1:3:0
 
 
 bin_PROGRAMS = \
- gnunet-arm \
+ gnunet-arm 
+
+libexec_PROGRAMS = \
  gnunet-service-arm \
  mockup-service 
 
@@ -58,10 +62,10 @@ mockup_service_SOURCES = \
 check_PROGRAMS = \
  test_arm_api \
  test_exponential_backoff \
- test_gnunet_service_manager
+ test_gnunet_service_arm
 
 check_SCRIPTS = \
- test_gnunet_arm.sh
+ test_gnunet_arm.py
 
 if ENABLE_TEST_RUN
 TESTS = $(check_PROGRAMS)  $(check_SCRIPTS)
@@ -79,13 +83,23 @@ test_exponential_backoff_LDADD = \
   $(top_builddir)/src/arm/libgnunetarm.la \
   $(top_builddir)/src/util/libgnunetutil.la
 
-test_gnunet_service_manager_SOURCES = \
- test_gnunet_service_manager.c
- test_gnunet_service_manager_LDADD = \
+test_gnunet_service_arm_SOURCES = \
+ test_gnunet_service_arm.c
+ test_gnunet_service_arm_LDADD = \
   $(top_builddir)/src/arm/libgnunetarm.la \
   $(top_builddir)/src/util/libgnunetutil.la  
 
+do_subst = $(SED) -e 's,[@]PYTHON[@],$(PYTHON),g'
+
+%.py: %.py.in Makefile
+	$(do_subst) < $(srcdir)/$< > $@
+	chmod +x $@
+
+test_gnunet_arm.py: test_gnunet_arm.py.in Makefile
+	$(do_subst) < $(srcdir)/test_gnunet_arm.py.in > test_gnunet_arm.py
+	chmod +x test_gnunet_arm.py
+
 EXTRA_DIST = \
   test_arm_api_data.conf \
-  do_start_process.c \
-  $(check_SCRIPTS) 
+  test_gnunet_arm.py.in \
+  do_start_process.c

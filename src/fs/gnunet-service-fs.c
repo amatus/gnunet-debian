@@ -22,9 +22,6 @@
  * @file fs/gnunet-service-fs.c
  * @brief gnunet anonymity protocol implementation
  * @author Christian Grothoff
- *
- * To use:
- * - consider re-issue GSF_dht_lookup_ after non-DHT reply received
  */
 #include "platform.h"
 #include <float.h>
@@ -46,6 +43,7 @@
 #include "gnunet-service-fs_pr.h"
 #include "gnunet-service-fs_push.h"
 #include "gnunet-service-fs_put.h"
+#include "gnunet-service-fs_stream.h"
 #include "fs.h"
 
 /**
@@ -62,6 +60,11 @@
  * decremented by 1/16th.
  */
 #define COVER_AGE_FREQUENCY GNUNET_TIME_relative_multiply (GNUNET_TIME_UNIT_SECONDS, 5)
+
+/**
+ * Collect an instane number of statistics?  May cause excessive IPC.
+ */
+#define INSANE_STATISTICS GNUNET_NO
 
 
 /* ****************************** globals ****************************** */
@@ -108,6 +111,11 @@ struct GNUNET_TIME_Relative GSF_avg_latency = { 500 };
  * "current_priorities" by at most 1.
  */
 double GSF_current_priorities;
+
+/**
+ * Size of the datastore queue we assume for common requests.
+ */
+unsigned int GSF_datastore_queue_size;
 
 /**
  * How many query messages have we received 'recently' that
@@ -296,9 +304,11 @@ consider_request_for_forwarding (void *cls,
 
   if (GNUNET_YES != GSF_pending_request_test_target_ (pr, peer))
   {
+#if INSANE_STATISTICS
     GNUNET_STATISTICS_update (GSF_stats,
                               gettext_noop ("# Loopback routes suppressed"), 1,
                               GNUNET_NO);
+#endif
     return;
   }
   GSF_plan_add_ (cp, pr);
@@ -384,7 +394,30 @@ start_p2p_processing (void *cls, struct GSF_PendingRequest *pr,
     GSF_pending_request_cancel_ (pr, GNUNET_YES);
     return;
   }
-  GSF_dht_lookup_ (pr);
+  if (0 == prd->anonymity_level)
+  {
+    switch (prd->type)
+    {
+    case GNUNET_BLOCK_TYPE_FS_DBLOCK:
+    case GNUNET_BLOCK_TYPE_FS_IBLOCK:
+      /* the above block types MAY be available via 'stream' */
+      GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+		  "Considering stream-based download for block\n");
+      GSF_stream_lookup_ (pr);
+      break; 
+    case GNUNET_BLOCK_TYPE_FS_KBLOCK:
+    case GNUNET_BLOCK_TYPE_FS_SBLOCK:
+    case GNUNET_BLOCK_TYPE_FS_NBLOCK:
+      /* the above block types are in the DHT */
+      GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+		  "Considering DHT-based search for block\n");
+      GSF_dht_lookup_ (pr);
+      break;
+    default:
+      GNUNET_break (0);
+      break;
+    }
+  }
   consider_forwarding (NULL, pr, result);
 }
 
@@ -432,6 +465,7 @@ handle_start_search (void *cls, struct GNUNET_SERVER_Client *client,
 static void
 shutdown_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 {
+  GSF_stream_stop ();
   if (NULL != GSF_core)
   {
     GNUNET_CORE_disconnect (GSF_core);
@@ -476,7 +510,7 @@ shutdown_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
  * @return GNUNET_YES to continue to iterate
  */
 static int
-consider_peer_for_forwarding (void *cls, const GNUNET_HashCode * key,
+consider_peer_for_forwarding (void *cls, const struct GNUNET_HashCode * key,
                               struct GSF_PendingRequest *pr)
 {
   struct GSF_ConnectedPeer *cp = cls;
@@ -548,6 +582,9 @@ static int
 main_init (struct GNUNET_SERVER_Handle *server,
            const struct GNUNET_CONFIGURATION_Handle *c)
 {
+  static const struct GNUNET_CORE_MessageHandler no_p2p_handlers[] = {
+    {NULL, 0, 0}
+  };
   static const struct GNUNET_CORE_MessageHandler p2p_handlers[] = {
     {&handle_p2p_get,
      GNUNET_MESSAGE_TYPE_FS_GET, 0},
@@ -570,11 +607,21 @@ main_init (struct GNUNET_SERVER_Handle *server,
      0},
     {NULL, NULL, 0, 0}
   };
+  int anon_p2p_off;
 
+  /* this option is really only for testcases that need to disable
+     _anonymous_ file-sharing for some reason */
+  anon_p2p_off = (GNUNET_YES ==
+		  GNUNET_CONFIGURATION_get_value_yesno (GSF_cfg,
+							"fs",
+							"DISABLE_ANON_TRANSFER"));  
   GSF_core =
-      GNUNET_CORE_connect (GSF_cfg, 1, NULL, &peer_init_handler,
+      GNUNET_CORE_connect (GSF_cfg, NULL, &peer_init_handler,
                            &peer_connect_handler, &GSF_peer_disconnect_handler_,
-                           NULL, GNUNET_NO, NULL, GNUNET_NO, p2p_handlers);
+                           NULL, GNUNET_NO, NULL, GNUNET_NO,
+			   (GNUNET_YES == anon_p2p_off)
+			   ? no_p2p_handlers
+			   : p2p_handlers);
   if (NULL == GSF_core)
   {
     GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
@@ -588,6 +635,7 @@ main_init (struct GNUNET_SERVER_Handle *server,
       GNUNET_SCHEDULER_add_delayed (COVER_AGE_FREQUENCY, &age_cover_counters,
                                     NULL);
   datastore_get_load = GNUNET_LOAD_value_init (DATASTORE_LOAD_AUTODECLINE);
+  GSF_stream_start ();
   GNUNET_SCHEDULER_add_delayed (GNUNET_TIME_UNIT_FOREVER_REL, &shutdown_task,
                                 NULL);
   return GNUNET_OK;
@@ -605,7 +653,18 @@ static void
 run (void *cls, struct GNUNET_SERVER_Handle *server,
      const struct GNUNET_CONFIGURATION_Handle *cfg)
 {
+  unsigned long long dqs;
+
   GSF_cfg = cfg;
+  if (GNUNET_OK !=
+      GNUNET_CONFIGURATION_get_value_size (GSF_cfg, "fs", "DATASTORE_QUEUE_SIZE",
+                                           &dqs))
+  {
+    GNUNET_log_config_missing (GNUNET_ERROR_TYPE_INFO,
+			       "fs", "DATASTORE_QUEUE_SIZE");
+    dqs = 1024;
+  }
+  GSF_datastore_queue_size = (unsigned int) dqs;
   GSF_enable_randomized_delays =
       GNUNET_CONFIGURATION_get_value_yesno (cfg, "fs", "DELAY");
   GSF_dsh = GNUNET_DATASTORE_connect (cfg);

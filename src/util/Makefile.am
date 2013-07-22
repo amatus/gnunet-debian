@@ -2,6 +2,8 @@ INCLUDES = -I$(top_srcdir)/src/include -I$(top_builddir)/src/include
 
 plugindir = $(libdir)/gnunet
 
+libexecdir= $(pkglibdir)/libexec/
+
 pkgcfgdir= $(pkgdatadir)/config.d/
 
 dist_pkgcfg_DATA = \
@@ -14,7 +16,7 @@ if MINGW
 noinst_LTLIBRARIES = \
   libgnunetutilwin.la
 libgnunetutilwin_la_SOURCES = \
-  win.cc \
+  win.c \
   winproc.c
 libgnunetutilwin_la_LDFLAGS = \
   -no-undefined -Wl,--export-all-symbols 
@@ -22,6 +24,7 @@ libgnunetutilwin_la_LIBADD = \
   -lshell32 -liconv -lstdc++ \
   -lcomdlg32 -lgdi32 -liphlpapi
 WINLIB = libgnunetutilwin.la
+W32CAT = w32cat
 endif
 
 if !MINGW
@@ -33,8 +36,11 @@ if USE_COVERAGE
   XLIB = -lgcov
 endif
 
+w32cat_SOURCES = w32cat.c
+
 noinst_PROGRAMS = \
  gnunet-config-diff \
+ $(W32CAT) \
  test_common_logging_dummy
 
 
@@ -70,6 +76,7 @@ libgnunetutil_la_SOURCES = \
   container_slist.c \
   crypto_aes.c \
   crypto_crc.c \
+  crypto_ecc.c \
   crypto_hash.c \
   crypto_hkdf.c \
   crypto_kdf.c \
@@ -107,17 +114,23 @@ libgnunetutil_la_LIBADD = \
   $(GCLIBADD) $(WINLIB) \
   $(LIBGCRYPT_LIBS) \
   $(LTLIBICONV) \
+  $(LTLIBINTL) \
   -lltdl -lz -lunistring $(XLIB) 
 
 libgnunetutil_la_LDFLAGS = \
   $(GN_LIB_LDFLAGS) \
-  -version-info 8:0:0
+  -version-info 11:0:2
 
+
+libexec_PROGRAMS = \
+ gnunet-service-resolver 
 
 bin_PROGRAMS = \
- gnunet-service-resolver \
  gnunet-resolver \
- gnunet-rsa
+ gnunet-config \
+ gnunet-ecc \
+ gnunet-rsa \
+ gnunet-uri 
 
 
 gnunet_service_resolver_SOURCES = \
@@ -142,8 +155,35 @@ gnunet_rsa_SOURCES = \
  gnunet-rsa.c         
 gnunet_rsa_LDADD = \
   $(top_builddir)/src/util/libgnunetutil.la \
-  $(GN_LIBINTL)
+  $(GN_LIBINTL) -lgcrypt
 gnunet_rsa_DEPENDENCIES = \
+  libgnunetutil.la
+
+
+gnunet_ecc_SOURCES = \
+ gnunet-ecc.c         
+gnunet_ecc_LDADD = \
+  $(top_builddir)/src/util/libgnunetutil.la \
+  $(GN_LIBINTL) -lgcrypt
+gnunet_ecc_DEPENDENCIES = \
+  libgnunetutil.la
+
+
+gnunet_config_SOURCES = \
+ gnunet-config.c         
+gnunet_config_LDADD = \
+  $(top_builddir)/src/util/libgnunetutil.la \
+  $(GN_LIBINTL)
+gnunet_config_DEPENDENCIES = \
+  libgnunetutil.la
+
+
+gnunet_uri_SOURCES = \
+ gnunet-uri.c         
+gnunet_uri_LDADD = \
+  $(top_builddir)/src/util/libgnunetutil.la \
+  $(GN_LIBINTL)
+gnunet_uri_DEPENDENCIES = \
   libgnunetutil.la
 
 plugin_LTLIBRARIES = \
@@ -156,7 +196,8 @@ libgnunet_plugin_test_la_LDFLAGS = \
 
 if HAVE_BENCHMARKS
  BENCHMARKS = \
-  perf_crypto_hash 
+  perf_crypto_hash \
+  perf_malloc
 endif
 
 check_PROGRAMS = \
@@ -174,6 +215,7 @@ check_PROGRAMS = \
  test_crypto_aes \
  test_crypto_aes_weak \
  test_crypto_crc \
+ test_crypto_ecc \
  test_crypto_hash \
  test_crypto_hkdf \
  test_crypto_ksk \
@@ -223,6 +265,8 @@ test_os_start_process_SOURCES = \
  test_os_start_process.c
 test_os_start_process_LDADD = \
  $(top_builddir)/src/util/libgnunetutil.la
+test_os_start_process_DEPENDENCIES = \
+ $(WINCAT)
 
 test_client_SOURCES = \
  test_client.c
@@ -293,6 +337,11 @@ test_crypto_aes_weak_LDADD = \
 test_crypto_crc_SOURCES = \
  test_crypto_crc.c
 test_crypto_crc_LDADD = \
+ $(top_builddir)/src/util/libgnunetutil.la  
+
+test_crypto_ecc_SOURCES = \
+ test_crypto_ecc.c
+test_crypto_ecc_LDADD = \
  $(top_builddir)/src/util/libgnunetutil.la  
 
 test_crypto_hash_SOURCES = \
@@ -454,6 +503,11 @@ test_speedup_LDADD = \
 perf_crypto_hash_SOURCES = \
  perf_crypto_hash.c
 perf_crypto_hash_LDADD = \
+ $(top_builddir)/src/util/libgnunetutil.la  
+
+perf_malloc_SOURCES = \
+ perf_malloc.c
+perf_malloc_LDADD = \
  $(top_builddir)/src/util/libgnunetutil.la  
 
 

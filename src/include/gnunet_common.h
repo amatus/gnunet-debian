@@ -46,10 +46,18 @@
 #include <stdarg.h>
 #endif
 
+#ifdef __cplusplus
+extern "C"
+{
+#if 0                           /* keep Emacsens' auto-indent happy */
+}
+#endif
+#endif
+
 /**
  * Version of the API (for entire gnunetutil.so library).
  */
-#define GNUNET_UTIL_VERSION 0x00090200
+#define GNUNET_UTIL_VERSION 0x00090500
 
 /**
  * Named constants for return values.  The following
@@ -170,9 +178,13 @@
  */
 #define GNUNET_NORETURN __attribute__((noreturn))
 
+#if MINGW
 #if __GNUC__ > 3
 /**
- * gcc 4.x-ism to pack structures even on W32 (to be used before structs)
+ * gcc 4.x-ism to pack structures even on W32 (to be used before structs);
+ * Using this would cause structs to be unaligned on the stack on Sparc,
+ * so we *only* use this on W32 (see #670578 from Debian); fortunately,
+ * W32 doesn't run on sparc anyway.
  */
 #define GNUNET_NETWORK_STRUCT_BEGIN \
   _Pragma("pack(push)") \
@@ -180,19 +192,23 @@
 
 /**
  * gcc 4.x-ism to pack structures even on W32 (to be used after structs)
+ * Using this would cause structs to be unaligned on the stack on Sparc,
+ * so we *only* use this on W32 (see #670578 from Debian); fortunately,
+ * W32 doesn't run on sparc anyway.
  */
 #define GNUNET_NETWORK_STRUCT_END _Pragma("pack(pop)")
+
 #else
-#ifdef MINGW
 #error gcc 4.x or higher required on W32 systems
 #endif
+#else
 /**
- * Good luck, GNUNET_PACKED should suffice, but this won't work on W32
+ * Define as empty, GNUNET_PACKED should suffice, but this won't work on W32
  */
 #define GNUNET_NETWORK_STRUCT_BEGIN 
 
 /**
- * Good luck, GNUNET_PACKED should suffice, but this won't work on W32
+ * Define as empty, GNUNET_PACKED should suffice, but this won't work on W32;
  */
 #define GNUNET_NETWORK_STRUCT_END
 #endif
@@ -222,13 +238,21 @@ struct GNUNET_MessageHeader
 
 
 /**
- * @brief 512-bit hashcode
+ * @brief A SHA-512 hashcode
  */
-typedef struct GNUNET_HashCode
+struct GNUNET_HashCode
 {
   uint32_t bits[512 / 8 / sizeof (uint32_t)];   /* = 16 */
-}
-GNUNET_HashCode;
+};
+
+
+/**
+ * @brief A SHA-256 hashcode
+ */
+struct GNUNET_CRYPTO_ShortHashCode
+{
+  uint32_t bits[256 / 8 / sizeof (uint32_t)];   /* = 8 */
+};
 
 
 /**
@@ -237,7 +261,7 @@ GNUNET_HashCode;
  */
 struct GNUNET_PeerIdentity
 {
-  GNUNET_HashCode hashPubKey;
+  struct GNUNET_HashCode hashPubKey;
 };
 GNUNET_NETWORK_STRUCT_END
 
@@ -285,15 +309,20 @@ typedef void (*GNUNET_Logger) (void *cls, enum GNUNET_ErrorType kind,
 
 
 /**
- * Number of log calls to ignore.
+ * Get the number of log calls that are going to be skipped
+ *
+ * @return number of log calls to be ignored
  */
-extern unsigned int skip_log;
+int
+GNUNET_get_log_skip ();
 
 #if !defined(GNUNET_CULL_LOGGING)
 int
 GNUNET_get_log_call_status (int caller_level, const char *comp,
                             const char *file, const char *function, int line);
 #endif
+
+
 /**
  * Main log function.
  *
@@ -345,7 +374,7 @@ GNUNET_log_from_nocheck (enum GNUNET_ErrorType kind, const char *comp,
   if ((GNUNET_EXTRA_LOGGING > 0) || ((GNUNET_ERROR_TYPE_DEBUG & (kind)) == 0)) { \
     if (GN_UNLIKELY(log_call_enabled == -1))\
       log_call_enabled = GNUNET_get_log_call_status ((kind) & (~GNUNET_ERROR_TYPE_BULK), (comp), __FILE__, __FUNCTION__, log_line); \
-    if (GN_UNLIKELY(skip_log > 0)) {skip_log--;}\
+    if (GN_UNLIKELY(GNUNET_get_log_skip () > 0)) { GNUNET_log_skip (-1, GNUNET_NO); }\
     else {\
       if (GN_UNLIKELY(log_call_enabled))\
         GNUNET_log_from_nocheck ((kind), comp, __VA_ARGS__);	\
@@ -358,7 +387,7 @@ GNUNET_log_from_nocheck (enum GNUNET_ErrorType kind, const char *comp,
   if ((GNUNET_EXTRA_LOGGING > 0) || ((GNUNET_ERROR_TYPE_DEBUG & (kind)) == 0)) { \
     if (GN_UNLIKELY(log_call_enabled == -1))\
       log_call_enabled = GNUNET_get_log_call_status ((kind) & (~GNUNET_ERROR_TYPE_BULK), NULL, __FILE__, __FUNCTION__, log_line);\
-    if (GN_UNLIKELY(skip_log > 0)) {skip_log--;}\
+    if (GN_UNLIKELY(GNUNET_get_log_skip () > 0)) { GNUNET_log_skip (-1, GNUNET_NO); }\
     else {\
       if (GN_UNLIKELY(log_call_enabled))\
         GNUNET_log_nocheck ((kind), __VA_ARGS__);	\
@@ -372,6 +401,34 @@ GNUNET_log_from_nocheck (enum GNUNET_ErrorType kind, const char *comp,
 
 
 /**
+ * Log error message about missing configuration option.
+ *
+ * @param kind log level
+ * @param section section with missing option
+ * @param option name of missing option
+ */
+void
+GNUNET_log_config_missing (enum GNUNET_ErrorType kind, 
+			   const char *section,
+			   const char *option);
+
+
+/**
+ * Log error message about invalid configuration option value.
+ *
+ * @param kind log level
+ * @param section section with invalid option
+ * @param option name of invalid option
+ * @param required what is required that is invalid about the option
+ */
+void
+GNUNET_log_config_invalid (enum GNUNET_ErrorType kind, 
+			   const char *section,
+			   const char *option,
+			   const char *required);
+
+
+/**
  * Abort the process, generate a core dump if possible.
  */
 void
@@ -380,11 +437,11 @@ GNUNET_abort (void) GNUNET_NORETURN;
 /**
  * Ignore the next n calls to the log function.
  *
- * @param n number of log calls to ignore
+ * @param n number of log calls to ignore (could be negative)
  * @param check_reset GNUNET_YES to assert that the log skip counter is currently zero
  */
 void
-GNUNET_log_skip (unsigned int n, int check_reset);
+GNUNET_log_skip (int n, int check_reset);
 
 
 /**
@@ -420,6 +477,31 @@ GNUNET_logger_remove (GNUNET_Logger logger, void *logger_cls);
 
 
 /**
+ * Convert a short hash value to a string (for printing debug messages).
+ * This is one of the very few calls in the entire API that is
+ * NOT reentrant!
+ *
+ * @param hc the short hash code
+ * @return string
+ */
+const char *
+GNUNET_short_h2s (const struct GNUNET_CRYPTO_ShortHashCode * hc);
+
+
+/**
+ * Convert a short hash value to a string (for printing debug messages).
+ * This prints all 104 characters of a hashcode!
+ * This is one of the very few calls in the entire API that is
+ * NOT reentrant!
+ *
+ * @param hc the short hash code
+ * @return string
+ */
+const char *
+GNUNET_short_h2s_full (const struct GNUNET_CRYPTO_ShortHashCode * hc);
+
+
+/**
  * Convert a hash value to a string (for printing debug messages).
  * This is one of the very few calls in the entire API that is
  * NOT reentrant!
@@ -428,7 +510,7 @@ GNUNET_logger_remove (GNUNET_Logger logger, void *logger_cls);
  * @return string
  */
 const char *
-GNUNET_h2s (const GNUNET_HashCode * hc);
+GNUNET_h2s (const struct GNUNET_HashCode * hc);
 
 
 /**
@@ -441,7 +523,7 @@ GNUNET_h2s (const GNUNET_HashCode * hc);
  * @return string
  */
 const char *
-GNUNET_h2s_full (const GNUNET_HashCode * hc);
+GNUNET_h2s_full (const struct GNUNET_HashCode * hc);
 
 
 /**
@@ -854,5 +936,18 @@ GNUNET_copy_message (const struct GNUNET_MessageHeader *msg);
 #define __func__ "<unknown>"
 #endif
 #endif
+
+
+
+
+#if 0                           /* keep Emacsens' auto-indent happy */
+{
+#endif
+#ifdef __cplusplus
+}
+#endif
+
+
+
 
 #endif /*GNUNET_COMMON_H_ */

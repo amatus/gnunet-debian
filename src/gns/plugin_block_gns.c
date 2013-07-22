@@ -1,6 +1,6 @@
 /*
      This file is part of GNUnet
-     (C) 2010 Christian Grothoff (and other contributing authors)
+     (C) 2010, 2012 Christian Grothoff (and other contributing authors)
 
      GNUnet is free software; you can redistribute it and/or modify
      it under the terms of the GNU General Public License as published
@@ -29,6 +29,7 @@
 #include "gnunet_namestore_service.h"
 #include "block_gns.h"
 #include "gnunet_signatures.h"
+#include "gns_common.h"
 
 /**
  * Number of bits we set per entry in the bloomfilter.
@@ -56,24 +57,25 @@
  */
 static enum GNUNET_BLOCK_EvaluationResult
 block_plugin_gns_evaluate (void *cls, enum GNUNET_BLOCK_Type type,
-                          const GNUNET_HashCode * query,
+                          const struct GNUNET_HashCode * query,
                           struct GNUNET_CONTAINER_BloomFilter **bf,
                           int32_t bf_mutator, const void *xquery,
                           size_t xquery_size, const void *reply_block,
                           size_t reply_block_size)
 {
-  char* name;
-  GNUNET_HashCode pkey_hash_double;
-  GNUNET_HashCode query_key;
-  GNUNET_HashCode name_hash_double;
-  GNUNET_HashCode mhash;
-  GNUNET_HashCode chash;
+  const struct GNSNameRecordBlock *nrb;
+  const char* name;
+  const char *name_end;
+  const char *rd_data;
+  struct GNUNET_HashCode query_key;
+  struct GNUNET_HashCode mhash;
+  struct GNUNET_HashCode chash;
   struct GNUNET_CRYPTO_ShortHashCode pkey_hash;
-  struct GNUNET_CRYPTO_ShortHashCode name_hash;
-  struct GNSNameRecordBlock *nrb;
+  struct GNUNET_CRYPTO_HashAsciiEncoded xor_exp;
+  struct GNUNET_CRYPTO_HashAsciiEncoded xor_got;
   uint32_t rd_count;
-  char* rd_data = NULL;
-  int rd_len;
+  size_t rd_len;
+  size_t name_len;
   uint32_t record_xquery;
   unsigned int record_match;
   
@@ -97,21 +99,20 @@ block_plugin_gns_evaluate (void *cls, enum GNUNET_BLOCK_Type type,
   
   /* this is a reply */
 
-  nrb = (struct GNSNameRecordBlock *)reply_block;
-  name = (char*)&nrb[1];
-  GNUNET_CRYPTO_short_hash(&nrb->public_key,
-                     sizeof(nrb->public_key),
-                     &pkey_hash);
-
-  GNUNET_CRYPTO_short_hash(name, strlen(name), &name_hash);
+  nrb = (const struct GNSNameRecordBlock *)reply_block;
+  name = (const char*) &nrb[1];
+  name_end = memchr (name, 0, reply_block_size - sizeof (struct GNSNameRecordBlock));
+  if (NULL == name_end)
+  {
+    GNUNET_break_op (0);
+    return GNUNET_BLOCK_EVALUATION_RESULT_INVALID;
+  }
+  name_len = (name_end - name) + 1;
+  GNUNET_CRYPTO_short_hash (&nrb->public_key,
+			    sizeof(nrb->public_key),
+			    &pkey_hash);
+  GNUNET_GNS_get_key_for_record (name, &pkey_hash, &query_key);
   
-  GNUNET_CRYPTO_short_hash_double(&name_hash, &name_hash_double);
-  GNUNET_CRYPTO_short_hash_double(&pkey_hash, &pkey_hash_double);
-
-  GNUNET_CRYPTO_hash_xor(&pkey_hash_double, &name_hash_double, &query_key);
-  
-  struct GNUNET_CRYPTO_HashAsciiEncoded xor_exp;
-  struct GNUNET_CRYPTO_HashAsciiEncoded xor_got;
   GNUNET_CRYPTO_hash_to_enc (&query_key, &xor_exp);
   GNUNET_CRYPTO_hash_to_enc (query, &xor_got);
 
@@ -128,14 +129,14 @@ block_plugin_gns_evaluate (void *cls, enum GNUNET_BLOCK_Type type,
   
   record_match = 0;
   rd_count = ntohl(nrb->rd_count);
-  rd_data = (char*)&nrb[1];
-  rd_data += strlen(name) + 1;
-  rd_len = reply_block_size - (strlen(name) + 1
+  rd_data = &name[name_len];
+  rd_len = reply_block_size - (name_len
                                + sizeof(struct GNSNameRecordBlock));
   {
     struct GNUNET_NAMESTORE_RecordData rd[rd_count];
     unsigned int i;
-    struct GNUNET_TIME_Absolute exp = GNUNET_TIME_UNIT_FOREVER_ABS;
+    uint64_t exp = UINT64_MAX;
+    struct GNUNET_TIME_Absolute et = GNUNET_TIME_UNIT_FOREVER_ABS;
     
     if (GNUNET_SYSERR == GNUNET_NAMESTORE_records_deserialize (rd_len,
                                                                rd_data,
@@ -144,7 +145,6 @@ block_plugin_gns_evaluate (void *cls, enum GNUNET_BLOCK_Type type,
     {
       GNUNET_log(GNUNET_ERROR_TYPE_DEBUG,
                  "Data invalid (%d bytes, %d records)\n", rd_len, rd_count);
-      GNUNET_break_op (0);
       return GNUNET_BLOCK_EVALUATION_RESULT_INVALID;
     }
 
@@ -154,32 +154,34 @@ block_plugin_gns_evaluate (void *cls, enum GNUNET_BLOCK_Type type,
       record_xquery = ntohl(*((uint32_t*)xquery));
     
     for (i=0; i<rd_count; i++)
-    {
-      
-      exp = GNUNET_TIME_absolute_min (exp, rd[i].expiration);
-      
+    {     
+      GNUNET_break (0 == (rd[i].flags & GNUNET_NAMESTORE_RF_RELATIVE_EXPIRATION));
+      exp = GNUNET_MIN (exp, rd[i].expiration_time);
       GNUNET_log(GNUNET_ERROR_TYPE_DEBUG,
-                 "Got record of size %d\n", rd[i].data_size);
-
+		 "Got record of size %d expiration %u\n",
+     rd[i].data_size, rd[i].expiration_time);
       if ((record_xquery != 0)
           && (rd[i].record_type == record_xquery))
       {
         record_match++;
       }
     }
+    et.abs_value = exp;
     
-    GNUNET_log(GNUNET_ERROR_TYPE_DEBUG,
-               "Verifying signature of %d records for name %s\n",
-               rd_count, name);
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+		"Verifying signature of %d records for name %s with expiration of %u\n",
+		rd_count, name, et.abs_value);
 
-    if (GNUNET_OK != GNUNET_NAMESTORE_verify_signature (&nrb->public_key,
-                                                        exp,
-                                                        name,
-                                                        rd_count,
-                                                        rd,
-                                                        &nrb->signature))
+    if (GNUNET_OK != 
+	GNUNET_NAMESTORE_verify_signature (&nrb->public_key,
+					   et,
+					   name,
+					   rd_count,
+					   rd,
+					   &nrb->signature))
     {
-      GNUNET_log(GNUNET_ERROR_TYPE_DEBUG, "Signature invalid for name %s\n");
+      GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, 
+		  "Signature invalid for %s\n", name);
       GNUNET_break_op (0);
       return GNUNET_BLOCK_EVALUATION_RESULT_INVALID;
     }
@@ -187,8 +189,8 @@ block_plugin_gns_evaluate (void *cls, enum GNUNET_BLOCK_Type type,
   
   if (NULL != bf)
   {
-    GNUNET_CRYPTO_hash(reply_block, reply_block_size, &chash);
-    GNUNET_BLOCK_mingle_hash(&chash, bf_mutator, &mhash);
+    GNUNET_CRYPTO_hash (reply_block, reply_block_size, &chash);
+    GNUNET_BLOCK_mingle_hash (&chash, bf_mutator, &mhash);
     if (NULL != *bf)
     {
       if (GNUNET_YES == GNUNET_CONTAINER_bloomfilter_test(*bf, &mhash))
@@ -218,27 +220,26 @@ block_plugin_gns_evaluate (void *cls, enum GNUNET_BLOCK_Type type,
 static int
 block_plugin_gns_get_key (void *cls, enum GNUNET_BLOCK_Type type,
                          const void *block, size_t block_size,
-                         GNUNET_HashCode * key)
+                         struct GNUNET_HashCode * key)
 {
+  struct GNUNET_CRYPTO_ShortHashCode pkey_hash;
+  const struct GNSNameRecordBlock *nrb = block;
+  const char *name;
+
   if (type != GNUNET_BLOCK_TYPE_GNS_NAMERECORD)
     return GNUNET_SYSERR;
-  struct GNUNET_CRYPTO_ShortHashCode name_hash;
-  struct GNUNET_CRYPTO_ShortHashCode pkey_hash;
-  GNUNET_HashCode name_hash_double;
-  GNUNET_HashCode pkey_hash_double;
-
-  struct GNSNameRecordBlock *nrb = (struct GNSNameRecordBlock *)block;
-
-  GNUNET_CRYPTO_short_hash(&nrb[1], strlen((char*)&nrb[1]), &name_hash);
-  GNUNET_CRYPTO_short_hash(&nrb->public_key,
-                     sizeof(struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded),
-                     &pkey_hash);
-  
-  GNUNET_CRYPTO_short_hash_double(&name_hash, &name_hash_double);
-  GNUNET_CRYPTO_short_hash_double(&pkey_hash, &pkey_hash_double);
-
-  GNUNET_CRYPTO_hash_xor(&name_hash_double, &pkey_hash_double, key);
-  
+  name = (const char *) &nrb[1];
+  if (NULL == memchr (name, '\0', 
+		      block_size - sizeof (struct GNSNameRecordBlock)))
+  {
+    /* malformed, no 0-termination in name */
+    GNUNET_break_op (0);
+    return GNUNET_SYSERR; 
+  }
+  GNUNET_CRYPTO_short_hash (&nrb->public_key,
+			    sizeof (struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded),
+			    &pkey_hash);
+  GNUNET_GNS_get_key_for_record (name, &pkey_hash, key);
   return GNUNET_OK;
 }
 

@@ -54,6 +54,51 @@ extern "C"
 #include "gnunet_configuration_lib.h"
 #include "gnunet_scheduler_lib.h"
 
+
+/**
+ * Flags that determine which of the standard streams
+ * should be inherited by the child process.
+ */
+enum GNUNET_OS_InheritStdioFlags
+{
+
+  /**
+   * No standard streams should be inherited.
+   */
+  GNUNET_OS_INHERIT_STD_NONE = 0,
+
+  /**
+   * When this flag is set, the child process will
+   * inherit stdin of the parent.
+   */
+  GNUNET_OS_INHERIT_STD_IN = 1,
+  
+  /**
+   * When this flag is set, the child process will
+   * inherit stdout of the parent.
+   */
+  GNUNET_OS_INHERIT_STD_OUT = 2,
+
+  /**
+   * When this flag is set, the child process will
+   * inherit stderr of the parent.
+   */
+  GNUNET_OS_INHERIT_STD_ERR = 4,
+
+  /**
+   * When these flags are set, the child process will
+   * inherit stdout and stderr of the parent.
+   */
+  GNUNET_OS_INHERIT_STD_OUT_AND_ERR = 6,
+
+  /**
+   * Use this option to have all of the standard streams
+   * (stdin, stdout and stderror) be inherited.
+   */
+  GNUNET_OS_INHERIT_STD_ALL = 7
+};
+
+
 /**
  * Process information (OS-dependent)
  */
@@ -106,7 +151,12 @@ enum GNUNET_OS_InstallationPathKind
    * Return the prefix of the path with documentation files, including the
    * license (share/doc/gnunet/).
    */
-  GNUNET_OS_IPK_DOCDIR
+  GNUNET_OS_IPK_DOCDIR,
+
+  /**
+   * Return the directory where helper binaries are installed (lib/gnunet/libexec/)
+   */
+  GNUNET_OS_IPK_LIBEXECDIR
 };
 
 
@@ -153,6 +203,18 @@ enum GNUNET_OS_ProcessStatusType
  */
 char *
 GNUNET_OS_installation_get_path (enum GNUNET_OS_InstallationPathKind dirkind);
+
+
+/**
+ * Given the name of a gnunet-helper, gnunet-service or gnunet-daemon
+ * binary, try to prefix it with the libexec/-directory to get the
+ * full path.
+ *
+ * @param progname name of the binary
+ * @return full path to the binary, if possible, otherwise copy of 'progname'
+ */
+char *
+GNUNET_OS_get_libexec_binary_path (const char *progname);
 
 
 /**
@@ -257,6 +319,7 @@ GNUNET_OS_set_process_priority (struct GNUNET_OS_Process *proc,
  * Start a process.
  *
  * @param pipe_control should a pipe be used to send signals to the child?
+ * @param std_inheritance a set of GNUNET_OS_INHERIT_STD_* flags
  * @param pipe_stdin pipe to use to send input to child process (or NULL)
  * @param pipe_stdout pipe to use to get output from child process (or NULL)
  * @param filename name of the binary
@@ -265,6 +328,7 @@ GNUNET_OS_set_process_priority (struct GNUNET_OS_Process *proc,
  */
 struct GNUNET_OS_Process *
 GNUNET_OS_start_process_vap (int pipe_control,
+                             enum GNUNET_OS_InheritStdioFlags std_inheritance,
 			     struct GNUNET_DISK_PipeHandle *pipe_stdin,
 			     struct GNUNET_DISK_PipeHandle *pipe_stdout,
 			     const char *filename, 
@@ -275,6 +339,7 @@ GNUNET_OS_start_process_vap (int pipe_control,
  * Start a process.
  *
  * @param pipe_control should a pipe be used to send signals to the child?
+ * @param std_inheritance a set of GNUNET_OS_INHERIT_STD_* flags
  * @param pipe_stdin pipe to use to send input to child process (or NULL)
  * @param pipe_stdout pipe to use to get output from child process (or NULL)
  * @param filename name of the binary
@@ -283,6 +348,7 @@ GNUNET_OS_start_process_vap (int pipe_control,
  */
 struct GNUNET_OS_Process *
 GNUNET_OS_start_process (int pipe_control,
+                         enum GNUNET_OS_InheritStdioFlags std_inheritance,
 			 struct GNUNET_DISK_PipeHandle *pipe_stdin,
                          struct GNUNET_DISK_PipeHandle *pipe_stdout,
                          const char *filename, ...);
@@ -292,6 +358,7 @@ GNUNET_OS_start_process (int pipe_control,
  * Start a process.
  *
  * @param pipe_control should a pipe be used to send signals to the child?
+ * @param std_inheritance a set of GNUNET_OS_INHERIT_STD_* flags
  * @param pipe_stdin pipe to use to send input to child process (or NULL)
  * @param pipe_stdout pipe to use to get output from child process (or NULL)
  * @param filename name of the binary
@@ -300,6 +367,7 @@ GNUNET_OS_start_process (int pipe_control,
  */
 struct GNUNET_OS_Process *
 GNUNET_OS_start_process_va (int pipe_control,
+                            enum GNUNET_OS_InheritStdioFlags std_inheritance,
 			    struct GNUNET_DISK_PipeHandle *pipe_stdin,
                             struct GNUNET_DISK_PipeHandle *pipe_stdout,
                             const char *filename, va_list va);
@@ -308,6 +376,7 @@ GNUNET_OS_start_process_va (int pipe_control,
  * Start a process.
  *
  * @param pipe_control should a pipe be used to send signals to the child?
+ * @param std_inheritance a set of GNUNET_OS_INHERIT_STD_* flags
  * @param lsocks array of listen sockets to dup systemd-style (or NULL);
  *         must be NULL on platforms where dup is not supported
  * @param filename name of the binary
@@ -317,6 +386,7 @@ GNUNET_OS_start_process_va (int pipe_control,
  */
 struct GNUNET_OS_Process *
 GNUNET_OS_start_process_v (int pipe_control,
+                           enum GNUNET_OS_InheritStdioFlags std_inheritance,
 			   const SOCKTYPE *lsocks, 
 			   const char *filename,
                            char *const argv[]);

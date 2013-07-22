@@ -26,7 +26,7 @@
 
 #include "platform.h"
 #include "gnunet_common.h"
-#include "gnunet_getopt_lib.h"
+#include "gnunet_util_lib.h"
 
 #define LOG(kind,...) GNUNET_log_from (kind, "util", __VA_ARGS__)
 
@@ -38,7 +38,7 @@
  * @param scls additional closure (points to version string)
  * @param option name of the option
  * @param value not used (NULL)
- * @return GNUNET_SYSERR (do not continue)
+ * @return GNUNET_NO (do not continue, not an error)
  */
 int
 GNUNET_GETOPT_print_version_ (struct GNUNET_GETOPT_CommandLineProcessorContext
@@ -48,7 +48,7 @@ GNUNET_GETOPT_print_version_ (struct GNUNET_GETOPT_CommandLineProcessorContext
   const char *version = scls;
 
   printf ("%s v%s\n", ctx->binaryName, version);
-  return GNUNET_SYSERR;
+  return GNUNET_NO;
 }
 
 
@@ -62,7 +62,7 @@ GNUNET_GETOPT_print_version_ (struct GNUNET_GETOPT_CommandLineProcessorContext
  * @param scls additional closure (points to about text)
  * @param option name of the option
  * @param value not used (NULL)
- * @return GNUNET_SYSERR (do not continue)
+ * @return GNUNET_NO (do not continue, not an error)
  */
 int
 GNUNET_GETOPT_format_help_ (struct GNUNET_GETOPT_CommandLineProcessorContext
@@ -152,7 +152,7 @@ OUTER:
   printf ("Report bugs to gnunet-developers@gnu.org.\n"
           "GNUnet home page: http://www.gnu.org/software/gnunet/\n"
           "General help using GNU software: http://www.gnu.org/gethelp/\n");
-  return GNUNET_SYSERR;
+  return GNUNET_NO;
 }
 
 
@@ -212,7 +212,7 @@ GNUNET_GETOPT_set_one (struct GNUNET_GETOPT_CommandLineProcessorContext *ctx,
  * A pointer to this function should be passed as part of the
  * 'struct GNUNET_GETOPT_CommandLineOption' array to initialize options
  * of this type.  It should be followed by a pointer to a value of
- * type 'char *'.
+ * type 'char *', which will be allocated with the requested string.
  *
  * @param ctx command line processing context
  * @param scls additional closure (will point to the 'char *',
@@ -256,6 +256,36 @@ GNUNET_GETOPT_set_ulong (struct GNUNET_GETOPT_CommandLineProcessorContext *ctx,
   if (1 != SSCANF (value, "%llu", val))
   {
     FPRINTF (stderr, _("You must pass a number to the `%s' option.\n"), option);
+    return GNUNET_SYSERR;
+  }
+  return GNUNET_OK;
+}
+
+
+/**
+ * Set an option of type 'struct GNUNET_TIME_Relative' from the command line.
+ * A pointer to this function should be passed as part of the
+ * 'struct GNUNET_GETOPT_CommandLineOption' array to initialize options
+ * of this type.  It should be followed by a pointer to a value of
+ * type 'struct GNUNET_TIME_Relative'.
+ *
+ * @param ctx command line processing context
+ * @param scls additional closure (will point to the 'struct GNUNET_TIME_Relative')
+ * @param option name of the option
+ * @param value actual value of the option as a string.
+ * @return GNUNET_OK if parsing the value worked
+ */
+int
+GNUNET_GETOPT_set_relative_time (struct GNUNET_GETOPT_CommandLineProcessorContext *ctx,
+				 void *scls, const char *option, const char *value)
+{
+  struct GNUNET_TIME_Relative *val = scls;
+
+  if (GNUNET_OK !=
+      GNUNET_STRINGS_fancy_time_to_relative (value,
+					     val))
+  {
+    FPRINTF (stderr, _("You must pass relative time to the `%s' option.\n"), option);
     return GNUNET_SYSERR;
   }
   return GNUNET_OK;

@@ -34,7 +34,7 @@
 /**
  * Per-entry overhead estimate
  */
-#define OVERHEAD (sizeof(GNUNET_HashCode) + 24)
+#define OVERHEAD (sizeof(struct GNUNET_HashCode) + 24)
 
 /**
  * Context for all functions in this plugin.
@@ -75,13 +75,18 @@ init_connection (struct Plugin *plugin)
               "  type INTEGER NOT NULL DEFAULT 0,"
               "  discard_time BIGINT NOT NULL DEFAULT 0,"
               "  key BYTEA NOT NULL DEFAULT '',"
-              "  value BYTEA NOT NULL DEFAULT '')" "WITH OIDS");
-  if ((ret == NULL) || ((PQresultStatus (ret) != PGRES_COMMAND_OK) && (0 != strcmp ("42P07",    /* duplicate table */
-                                                                                    PQresultErrorField
-                                                                                    (ret,
-                                                                                     PG_DIAG_SQLSTATE)))))
+              "  value BYTEA NOT NULL DEFAULT '',"
+              "  path BYTEA DEFAULT '')"
+	      "WITH OIDS");
+  if ( (ret == NULL) || 
+       ((PQresultStatus (ret) != PGRES_COMMAND_OK) && 
+	(0 != strcmp ("42P07",    /* duplicate table */
+		      PQresultErrorField
+		      (ret,
+		       PG_DIAG_SQLSTATE)))))
   {
-    (void) GNUNET_POSTGRES_check_result (plugin->dbh, ret, PGRES_COMMAND_OK, "CREATE TABLE",
+    (void) GNUNET_POSTGRES_check_result (plugin->dbh, ret, 
+					 PGRES_COMMAND_OK, "CREATE TABLE",
 					 "gn090dc");
     PQfinish (plugin->dbh);
     plugin->dbh = NULL;
@@ -123,11 +128,11 @@ init_connection (struct Plugin *plugin)
   PQclear (ret);
   if ((GNUNET_OK !=
        GNUNET_POSTGRES_prepare (plugin->dbh, "getkt",
-                   "SELECT discard_time,type,value FROM gn090dc "
+                   "SELECT discard_time,type,value,path FROM gn090dc "
                    "WHERE key=$1 AND type=$2 ", 2)) ||
       (GNUNET_OK !=
        GNUNET_POSTGRES_prepare (plugin->dbh, "getk",
-                   "SELECT discard_time,type,value FROM gn090dc "
+                   "SELECT discard_time,type,value,path FROM gn090dc "
                    "WHERE key=$1", 1)) ||
       (GNUNET_OK !=
        GNUNET_POSTGRES_prepare (plugin->dbh, "getm",
@@ -137,8 +142,8 @@ init_connection (struct Plugin *plugin)
        GNUNET_POSTGRES_prepare (plugin->dbh, "delrow", "DELETE FROM gn090dc WHERE oid=$1", 1)) ||
       (GNUNET_OK !=
        GNUNET_POSTGRES_prepare (plugin->dbh, "put",
-                   "INSERT INTO gn090dc (type, discard_time, key, value) "
-                   "VALUES ($1, $2, $3, $4)", 4)))
+                   "INSERT INTO gn090dc (type, discard_time, key, value, path) "
+                   "VALUES ($1, $2, $3, $4, $5)", 5)))
   {
     PQfinish (plugin->dbh);
     plugin->dbh = NULL;
@@ -157,12 +162,16 @@ init_connection (struct Plugin *plugin)
  * @param data data to store
  * @param type type of the value
  * @param discard_time when to discard the value in any case
- * @return 0 on error, number of bytes used otherwise
+ * @param path_info_len number of entries in 'path_info'
+ * @param path_info a path through the network
+ * @return 0 if duplicate, -1 on error, number of bytes used otherwise
  */
-static size_t
-postgres_plugin_put (void *cls, const GNUNET_HashCode * key, size_t size,
+static ssize_t
+postgres_plugin_put (void *cls, const struct GNUNET_HashCode * key, size_t size,
                      const char *data, enum GNUNET_BLOCK_Type type,
-                     struct GNUNET_TIME_Absolute discard_time)
+                     struct GNUNET_TIME_Absolute discard_time,
+		     unsigned int path_info_len,
+		     const struct GNUNET_PeerIdentity *path_info)
 {
   struct Plugin *plugin = cls;
   PGresult *ret;
@@ -173,22 +182,25 @@ postgres_plugin_put (void *cls, const GNUNET_HashCode * key, size_t size,
     (const char *) &btype,
     (const char *) &bexpi,
     (const char *) key,
-    (const char *) data
+    (const char *) data,
+    (const char *) path_info
   };
   int paramLengths[] = {
     sizeof (btype),
     sizeof (bexpi),
-    sizeof (GNUNET_HashCode),
-    size
+    sizeof (struct GNUNET_HashCode),
+    size,
+    path_info_len * sizeof (struct GNUNET_PeerIdentity)
   };
-  const int paramFormats[] = { 1, 1, 1, 1 };
+  const int paramFormats[] = { 1, 1, 1, 1, 1 };
 
   ret =
-      PQexecPrepared (plugin->dbh, "put", 4, paramValues, paramLengths,
+      PQexecPrepared (plugin->dbh, "put", 5, paramValues, paramLengths,
                       paramFormats, 1);
   if (GNUNET_OK !=
-      GNUNET_POSTGRES_check_result (plugin->dbh, ret, PGRES_COMMAND_OK, "PQexecPrepared", "put"))
-    return GNUNET_SYSERR;
+      GNUNET_POSTGRES_check_result (plugin->dbh, ret, 
+				    PGRES_COMMAND_OK, "PQexecPrepared", "put"))
+    return -1;
   PQclear (ret);
   return size + OVERHEAD;
 }
@@ -206,7 +218,7 @@ postgres_plugin_put (void *cls, const GNUNET_HashCode * key, size_t size,
  * @return the number of results found
  */
 static unsigned int
-postgres_plugin_get (void *cls, const GNUNET_HashCode * key,
+postgres_plugin_get (void *cls, const struct GNUNET_HashCode * key,
                      enum GNUNET_BLOCK_Type type,
                      GNUNET_DATACACHE_Iterator iter, void *iter_cls)
 {
@@ -218,7 +230,7 @@ postgres_plugin_get (void *cls, const GNUNET_HashCode * key,
     (const char *) &btype,
   };
   int paramLengths[] = {
-    sizeof (GNUNET_HashCode),
+    sizeof (struct GNUNET_HashCode),
     sizeof (btype),
   };
   const int paramFormats[] = { 1, 1 };
@@ -226,6 +238,8 @@ postgres_plugin_get (void *cls, const GNUNET_HashCode * key,
   uint32_t size;
   unsigned int cnt;
   unsigned int i;
+  unsigned int path_len;
+  const struct GNUNET_PeerIdentity *path;
   PGresult *res;
 
   res =
@@ -254,7 +268,7 @@ postgres_plugin_get (void *cls, const GNUNET_HashCode * key,
     PQclear (res);
     return cnt;
   }
-  if ((3 != PQnfields (res)) || (sizeof (uint64_t) != PQfsize (res, 0)) ||
+  if ((4 != PQnfields (res)) || (sizeof (uint64_t) != PQfsize (res, 0)) ||
       (sizeof (uint32_t) != PQfsize (res, 1)))
   {
     GNUNET_break (0);
@@ -267,12 +281,23 @@ postgres_plugin_get (void *cls, const GNUNET_HashCode * key,
         GNUNET_ntohll (*(uint64_t *) PQgetvalue (res, i, 0));
     type = ntohl (*(uint32_t *) PQgetvalue (res, i, 1));
     size = PQgetlength (res, i, 2);
+    path_len = PQgetlength (res, i, 3);
+    if (0 != (path_len % sizeof (struct GNUNET_PeerIdentity)))
+    {
+      GNUNET_break (0);
+      path_len = 0;
+    }
+    path_len %= sizeof (struct GNUNET_PeerIdentity);
+    path = (const struct GNUNET_PeerIdentity *) PQgetvalue (res, i, 3);
     LOG (GNUNET_ERROR_TYPE_DEBUG, 
 	 "Found result of size %u bytes and type %u in database\n",
 	 (unsigned int) size, (unsigned int) type);
     if (GNUNET_SYSERR ==
-        iter (iter_cls, expiration_time, key, size, PQgetvalue (res, i, 2),
-              (enum GNUNET_BLOCK_Type) type))
+        iter (iter_cls, key, size, PQgetvalue (res, i, 2),
+              (enum GNUNET_BLOCK_Type) type,
+	      expiration_time,
+	      path_len,
+	      path))
     {
       LOG (GNUNET_ERROR_TYPE_DEBUG, 
 	   "Ending iteration (client error)\n");
@@ -298,7 +323,7 @@ postgres_plugin_del (void *cls)
   struct Plugin *plugin = cls;
   uint32_t size;
   uint32_t oid;
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
   PGresult *res;
 
   res = PQexecPrepared (plugin->dbh, "getm", 0, NULL, NULL, NULL, 1);
@@ -319,7 +344,7 @@ postgres_plugin_del (void *cls)
   }
   if ((3 != PQnfields (res)) || (sizeof (size) != PQfsize (res, 0)) ||
       (sizeof (oid) != PQfsize (res, 1)) ||
-      (sizeof (GNUNET_HashCode) != PQgetlength (res, 0, 2)))
+      (sizeof (struct GNUNET_HashCode) != PQgetlength (res, 0, 2)))
   {
     GNUNET_break (0);
     PQclear (res);
@@ -327,7 +352,7 @@ postgres_plugin_del (void *cls)
   }
   size = ntohl (*(uint32_t *) PQgetvalue (res, 0, 0));
   oid = ntohl (*(uint32_t *) PQgetvalue (res, 0, 1));
-  memcpy (&key, PQgetvalue (res, 0, 2), sizeof (GNUNET_HashCode));
+  memcpy (&key, PQgetvalue (res, 0, 2), sizeof (struct GNUNET_HashCode));
   PQclear (res);
   if (GNUNET_OK != GNUNET_POSTGRES_delete_by_rowid (plugin->dbh, "delrow", oid))
     return GNUNET_SYSERR;

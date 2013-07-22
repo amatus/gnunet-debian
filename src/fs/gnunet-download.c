@@ -52,6 +52,7 @@ static char *filename;
 
 static int local_only;
 
+
 static void
 cleanup_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 {
@@ -63,14 +64,49 @@ cleanup_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 static void
 shutdown_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 {
-  struct GNUNET_FS_DownloadContext *d;
-
-  if (dc != NULL)
+  if (NULL != dc)
   {
-    d = dc;
+    GNUNET_FS_download_stop (dc, delete_incomplete);
     dc = NULL;
-    GNUNET_FS_download_stop (d, delete_incomplete);
   }
+}
+
+
+/**
+ * Display progress bar (if tty).
+ *
+ * @param x current position in the download
+ * @param n total size of the download
+ * @param w desired number of steps in the progress bar
+ */
+static void 
+display_bar (unsigned long long x, 
+	     unsigned long long n, 
+	     unsigned int w)
+{
+  char buf[w + 20];
+  unsigned int p;
+  unsigned int endeq;
+  float ratio_complete;
+
+#if !WINDOWS
+  if (0 == isatty (1))
+    return;
+#else
+  if (FILE_TYPE_CHAR != GetFileType (GetStdHandle (STD_OUTPUT_HANDLE)))
+    return;
+#endif
+  ratio_complete = x/(float)n;
+  endeq = ratio_complete * w;
+  GNUNET_snprintf (buf, sizeof (buf),
+		   "%3d%% [", (int)(ratio_complete*100) );
+  for (p=0; p<endeq; p++)
+    strcat (buf, "=");
+  for (p=endeq; p<w; p++)
+    strcat (buf, " ");
+  strcat (buf, "]\r");
+  printf ("%s", buf);
+  fflush(stdout);
 }
 
 
@@ -91,7 +127,7 @@ static void *
 progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
 {
   char *s;
-  char *s2;
+  const char *s2;
   char *t;
 
   switch (info->status)
@@ -104,13 +140,15 @@ progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
   case GNUNET_FS_STATUS_DOWNLOAD_PROGRESS:
     if (verbose)
     {
-      s = GNUNET_STRINGS_relative_time_to_string (info->value.download.eta);
+      s = GNUNET_strdup (GNUNET_STRINGS_relative_time_to_string (info->value.download.eta,
+								 GNUNET_YES));
       if (info->value.download.specifics.progress.block_download_duration.rel_value 
           == GNUNET_TIME_UNIT_FOREVER_REL.rel_value)
-        s2 = GNUNET_strdup (_("<unknown time>"));
+        s2 = _("<unknown time>");
       else
         s2 = GNUNET_STRINGS_relative_time_to_string (
-              info->value.download.specifics.progress.block_download_duration);
+						     info->value.download.specifics.progress.block_download_duration,
+						     GNUNET_YES);
       t = GNUNET_STRINGS_byte_size_fancy (info->value.download.completed *
                                           1000LL /
                                           (info->value.download.
@@ -121,11 +159,23 @@ progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
                (unsigned long long) info->value.download.completed,
                (unsigned long long) info->value.download.size, s, t, s2);
       GNUNET_free (s);
-      GNUNET_free (s2);
       GNUNET_free (t);
+    }
+    else
+    {
+      display_bar (info->value.download.completed,
+		   info->value.download.size,
+		   60);
     }
     break;
   case GNUNET_FS_STATUS_DOWNLOAD_ERROR:
+#if !WINDOWS
+    if (0 != isatty (1))
+      fprintf (stdout, "\n");
+#else
+    if (FILE_TYPE_CHAR == GetFileType (GetStdHandle (STD_OUTPUT_HANDLE)))
+      fprintf (stdout, "\n");
+#endif
     FPRINTF (stderr, _("Error downloading: %s.\n"),
              info->value.download.specifics.error.message);
     GNUNET_SCHEDULER_shutdown ();
@@ -134,6 +184,13 @@ progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
     s = GNUNET_STRINGS_byte_size_fancy (info->value.download.completed * 1000 /
                                         (info->value.download.
                                          duration.rel_value + 1));
+#if !WINDOWS
+    if (0 != isatty (1))
+      fprintf (stdout, "\n");
+#else
+    if (FILE_TYPE_CHAR == GetFileType (GetStdHandle (STD_OUTPUT_HANDLE)))
+      fprintf (stdout, "\n");
+#endif
     FPRINTF (stdout, _("Downloading `%s' done (%s/s).\n"),
              info->value.download.filename, s);
     GNUNET_free (s);
@@ -272,11 +329,17 @@ main (int argc, char *const *argv)
      0, &GNUNET_GETOPT_increment_value, &verbose},
     GNUNET_GETOPT_OPTION_END
   };
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "gnunet-download [OPTIONS] URI",
-                              gettext_noop
-                              ("Download files from GNUnet using a GNUnet CHK or LOC URI (gnunet://fs/chk/...)"),
-                              options, &run, NULL)) ? ret : 1;
+
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+
+  ret = (GNUNET_OK ==
+	 GNUNET_PROGRAM_run (argc, argv, "gnunet-download [OPTIONS] URI",
+			     gettext_noop
+			     ("Download files from GNUnet using a GNUnet CHK or LOC URI (gnunet://fs/chk/...)"),
+			     options, &run, NULL)) ? ret : 1;
+  GNUNET_free ((void*) argv);
+  return ret;
 }
 
 /* end of gnunet-download.c */

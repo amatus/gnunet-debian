@@ -145,6 +145,16 @@ struct SendCallbackContext
    * Target of the message.
    */
   struct GNUNET_PeerIdentity target;
+
+  /**
+   * Payload size in bytes
+   */
+  size_t payload_size;
+
+  /**
+   * DV message size
+   */
+  size_t msg_size;
 };
 
 /**
@@ -154,9 +164,9 @@ struct SendCallbackContext
  * @param hash set to uid (extended with zeros)
  */
 static void
-hash_from_uid (uint32_t uid, GNUNET_HashCode * hash)
+hash_from_uid (uint32_t uid, struct GNUNET_HashCode * hash)
 {
-  memset (hash, 0, sizeof (GNUNET_HashCode));
+  memset (hash, 0, sizeof (struct GNUNET_HashCode));
   *((uint32_t *) hash) = uid;
 }
 
@@ -351,7 +361,7 @@ handle_message_receipt (void *cls, const struct GNUNET_MessageHeader *msg)
   char *sender_address;
   char *packed_msg;
   char *packed_msg_start;
-  GNUNET_HashCode uidhash;
+  struct GNUNET_HashCode uidhash;
   struct SendCallbackContext *send_ctx;
 
   if (msg == NULL)
@@ -416,11 +426,13 @@ handle_message_receipt (void *cls, const struct GNUNET_MessageHeader *msg)
     {
       if (ntohl (send_result_msg->result) == 0)
       {
-        send_ctx->cont (send_ctx->cont_cls, &send_ctx->target, GNUNET_OK);
+        send_ctx->cont (send_ctx->cont_cls, &send_ctx->target, GNUNET_OK,
+                        send_ctx->payload_size, send_ctx->msg_size);
       }
       else
       {
-        send_ctx->cont (send_ctx->cont_cls, &send_ctx->target, GNUNET_SYSERR);
+        send_ctx->cont (send_ctx->cont_cls, &send_ctx->target, GNUNET_SYSERR,
+                        send_ctx->payload_size, 0);
       }
     }
     GNUNET_free_non_null (send_ctx);
@@ -459,7 +471,7 @@ GNUNET_DV_send (struct GNUNET_DV_Handle *dv_handle,
   struct GNUNET_DV_SendMessage *msg;
   struct SendCallbackContext *send_ctx;
   char *end_of_message;
-  GNUNET_HashCode uidhash;
+  struct GNUNET_HashCode uidhash;
   int msize;
 
 #if DEBUG_DV_MESSAGES
@@ -484,6 +496,8 @@ GNUNET_DV_send (struct GNUNET_DV_Handle *dv_handle,
   memcpy (end_of_message, msgbuf, msgbuf_size);
   add_pending (dv_handle, msg);
   send_ctx = GNUNET_malloc (sizeof (struct SendCallbackContext));
+  send_ctx->payload_size = msgbuf_size;
+  send_ctx->msg_size = msize;
   send_ctx->cont = cont;
   send_ctx->cont_cls = cont_cls;
   memcpy (&send_ctx->target, target, sizeof (struct GNUNET_PeerIdentity));
@@ -587,7 +601,7 @@ GNUNET_DV_connect (const struct GNUNET_CONFIGURATION_Handle *cfg,
                                        GNUNET_YES, &transmit_start,
                                        start_context);
 
-  handle->send_callbacks = GNUNET_CONTAINER_multihashmap_create (100);
+  handle->send_callbacks = GNUNET_CONTAINER_multihashmap_create (100, GNUNET_NO);
 
   return handle;
 }

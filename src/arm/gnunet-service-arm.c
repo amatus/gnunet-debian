@@ -30,12 +30,6 @@
 #include "arm.h"
 
 /**
- * Threshold after which exponential backoff shouldn't increase (in ms); 30m
- */
-#define EXPONENTIAL_BACKOFF_THRESHOLD GNUNET_TIME_relative_multiply (GNUNET_TIME_UNIT_MINUTES, 30)
-
-
-/**
  * List of our services.
  */
 struct ServiceList;
@@ -246,6 +240,7 @@ start_process (struct ServiceList *sl)
   struct ServiceListeningInfo *sli;
   SOCKTYPE *lsocks;
   unsigned int ls;
+  char *binary;
 
   /* calculate listen socket list */
   lsocks = NULL;
@@ -317,17 +312,35 @@ start_process (struct ServiceList *sl)
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
 	      "Starting service `%s' using binary `%s' and configuration `%s'\n",
 	      sl->name, sl->binary, sl->config);
+  binary = GNUNET_OS_get_libexec_binary_path (sl->binary);
   GNUNET_assert (NULL == sl->proc);
   if (GNUNET_YES == use_debug)
-    sl->proc =
-      do_start_process (sl->pipe_control,
-			lsocks, loprefix, sl->binary, "-c", sl->config, "-L",
-			"DEBUG", options, NULL);
+  {
+    if (NULL == sl->config)
+      sl->proc =
+	do_start_process (sl->pipe_control, GNUNET_OS_INHERIT_STD_OUT_AND_ERR,
+			  lsocks, loprefix, binary, "-L",
+			  "DEBUG", options, NULL);
+    else
+      sl->proc =
+	do_start_process (sl->pipe_control, GNUNET_OS_INHERIT_STD_OUT_AND_ERR,
+			  lsocks, loprefix, binary, "-c", sl->config, "-L",
+			  "DEBUG", options, NULL);
+  }
   else
-    sl->proc =
-      do_start_process (sl->pipe_control,
-			lsocks, loprefix, sl->binary, "-c", sl->config,
-			options, NULL);
+  {
+    if (NULL == sl->config)
+      sl->proc =
+	do_start_process (sl->pipe_control, GNUNET_OS_INHERIT_STD_OUT_AND_ERR,
+			  lsocks, loprefix, binary, 
+			  options, NULL);
+    else
+      sl->proc =
+	do_start_process (sl->pipe_control, GNUNET_OS_INHERIT_STD_OUT_AND_ERR,
+			  lsocks, loprefix, binary, "-c", sl->config,
+			  options, NULL);
+  }
+  GNUNET_free (binary);
   if (sl->proc == NULL)
     GNUNET_log (GNUNET_ERROR_TYPE_ERROR, _("Failed to start service `%s'\n"),
 		sl->name);
@@ -476,6 +489,7 @@ accept_connection (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
   struct ServiceList *sl = sli->sl;
 
   sli->accept_task = GNUNET_SCHEDULER_NO_TASK;
+  GNUNET_assert (GNUNET_NO == in_shutdown);
   if (0 != (GNUNET_SCHEDULER_REASON_SHUTDOWN & tc->reason))
     return;
   start_process (sl);
@@ -903,8 +917,9 @@ delayed_restart_task (void *cls,
   }
   if (lowestRestartDelay.rel_value != GNUNET_TIME_UNIT_FOREVER_REL.rel_value)
   {
-    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Will restart process in %llums\n",
-		(unsigned long long) lowestRestartDelay.rel_value);
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, 
+		"Will restart process in %s\n",
+		GNUNET_STRINGS_relative_time_to_string (lowestRestartDelay, GNUNET_YES));
     child_restart_task =
       GNUNET_SCHEDULER_add_delayed_with_priority (lowestRestartDelay,
 						  GNUNET_SCHEDULER_PRIORITY_IDLE, 
@@ -983,9 +998,9 @@ maint_child_death (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
       if (0 != pos->killed_at.abs_value)
       {
 	GNUNET_log (GNUNET_ERROR_TYPE_INFO,
-		    _("Service `%s' took %llu ms to terminate\n"),
+		    _("Service `%s' took %s to terminate\n"),
 		    pos->name,
-		    GNUNET_TIME_absolute_get_duration (pos->killed_at).rel_value);
+		    GNUNET_STRINGS_relative_time_to_string (GNUNET_TIME_absolute_get_duration (pos->killed_at), GNUNET_YES));
       }
       GNUNET_OS_process_destroy (pos->proc);
       pos->proc = NULL;
@@ -1022,10 +1037,7 @@ maint_child_death (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 			    pos->name, statstr, statcode, pos->backoff.rel_value);
 	      /* schedule restart */
 	      pos->restart_at = GNUNET_TIME_relative_to_absolute (pos->backoff);
-	      pos->backoff =
-	        GNUNET_TIME_relative_min (EXPONENTIAL_BACKOFF_THRESHOLD,
-				          GNUNET_TIME_relative_multiply
-				          (pos->backoff, 2));
+	      pos->backoff = GNUNET_TIME_STD_BACKOFF (pos->backoff);
             }
 	  if (GNUNET_SCHEDULER_NO_TASK != child_restart_task)
 	    GNUNET_SCHEDULER_cancel (child_restart_task);
@@ -1117,20 +1129,23 @@ setup_service (void *cls, const char *section)
     return;
   }
   config = NULL;
-  if ((GNUNET_OK !=
-       GNUNET_CONFIGURATION_get_value_filename (cfg, section, "CONFIG",
-						&config)) ||
+  if (( (GNUNET_OK !=
+	 GNUNET_CONFIGURATION_get_value_filename (cfg, section, "CONFIG",
+						  &config)) &&
+	(GNUNET_OK !=
+	 GNUNET_CONFIGURATION_get_value_filename (cfg, "PATHS", "DEFAULTCONFIG",
+						  &config)) ) ||
       (0 != STAT (config, &sbuf)))
+  {
+    if (NULL != config)
     {
-      GNUNET_log (GNUNET_ERROR_TYPE_WARNING,
-		  _
-		  ("Configuration file `%s' for service `%s' not valid: %s\n"),
-		  config, section,
-		  (config == NULL) ? _("option missing") : STRERROR (errno));
-      GNUNET_free (binary);
-      GNUNET_free_non_null (config);
-      return;
+      GNUNET_log_config_invalid (GNUNET_ERROR_TYPE_WARNING, 
+				 section, "CONFIG",
+				 STRERROR (errno));
+      GNUNET_free (config);
+      config = NULL;
     }
+  }
   sl = GNUNET_malloc (sizeof (struct ServiceList));
   sl->name = GNUNET_strdup (section);
   sl->binary = binary;

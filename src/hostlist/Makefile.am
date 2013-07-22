@@ -2,6 +2,8 @@ INCLUDES = -I$(top_srcdir)/src/include
 
 pkgcfgdir= $(pkgdatadir)/config.d/
 
+libexecdir= $(pkglibdir)/libexec/
+
 dist_pkgcfg_DATA = \
   hostlist.conf
 
@@ -14,8 +16,10 @@ if HAVE_MHD
  GN_LIBMHD = -lmicrohttpd
 endif
 
-bin_PROGRAMS = \
+if HAVE_LIBCURL
+libexec_PROGRAMS = \
  gnunet-daemon-hostlist
+endif
 
 gnunet_daemon_hostlist_SOURCES = \
  gnunet-daemon-hostlist.c gnunet-daemon-hostlist.h \
@@ -36,6 +40,7 @@ gnunet_daemon_hostlist_LDADD = \
 gnunet_daemon_hostlist_CPPFLAGS = \
  @LIBCURL_CPPFLAGS@ 
 
+if HAVE_LIBCURL
 check_PROGRAMS = \
  test_gnunet_daemon_hostlist \
  test_gnunet_daemon_hostlist_reconnect \
@@ -47,6 +52,7 @@ TESTS = \
  test_gnunet_daemon_hostlist \
  test_gnunet_daemon_hostlist_reconnect \
  test_gnunet_daemon_hostlist_learning
+endif
 endif
 endif
 

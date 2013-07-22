@@ -228,6 +228,8 @@ prepare_beacon (struct Plugin *plugin, struct UDP_Beacon_Message *msg)
 
   const struct GNUNET_MessageHeader *hello;
   hello = plugin->env->get_our_hello ();
+  if (NULL == hello)
+    return 0;
   hello_size = GNUNET_HELLO_size ((struct GNUNET_HELLO_Message *) hello);
   msg_size = hello_size + sizeof (struct UDP_Beacon_Message);
 
@@ -258,7 +260,7 @@ udp_ipv4_broadcast_send (void *cls,
   sent = 0;
   baddr = plugin->ipv4_broadcast_head;
   /* just IPv4 */
-  while ((baddr != NULL) && (baddr->addrlen == sizeof (struct sockaddr_in)))
+  while ((msg_size > 0) && (baddr != NULL) && (baddr->addrlen == sizeof (struct sockaddr_in)))
   {
     struct sockaddr_in *addr = (struct sockaddr_in *) baddr->addr;
 
@@ -268,7 +270,19 @@ udp_ipv4_broadcast_send (void *cls,
                                       (const struct sockaddr *) addr,
                                       baddr->addrlen);
     if (sent == GNUNET_SYSERR)
-      GNUNET_log_strerror (GNUNET_ERROR_TYPE_ERROR, "sendto");
+    {
+      if ((ENETUNREACH == errno) || (ENETDOWN == errno))
+      {
+        /* "Network unreachable" or "Network down"
+         *
+         * This indicates that we just do not have network connectivity
+         */
+        GNUNET_log (GNUNET_ERROR_TYPE_BULK | GNUNET_ERROR_TYPE_WARNING,
+            "Network connectivity is down, cannot send beacon!\n");
+      }
+      else
+        GNUNET_log_strerror (GNUNET_ERROR_TYPE_ERROR, "sendto");
+    }
     else
     {
       LOG (GNUNET_ERROR_TYPE_DEBUG,
@@ -301,7 +315,20 @@ udp_ipv6_broadcast_send (void *cls,
                                     &plugin->ipv6_multicast_address,
                                     sizeof (struct sockaddr_in6));
   if (sent == GNUNET_SYSERR)
-    GNUNET_log_strerror (GNUNET_ERROR_TYPE_ERROR, "sendto");
+  {
+    if ((ENETUNREACH == errno) || (ENETDOWN == errno))
+    {
+      /* "Network unreachable" or "Network down"
+       *
+       * This indicates that this system is IPv6 enabled, but does not
+       * have a valid global IPv6 address assigned
+       */
+      GNUNET_log (GNUNET_ERROR_TYPE_BULK | GNUNET_ERROR_TYPE_WARNING,
+          "Network connectivity is down, cannot send beacon!\n");
+    }
+    else
+      GNUNET_log_strerror (GNUNET_ERROR_TYPE_ERROR, "sendto");
+  }
   else
   {
     LOG (GNUNET_ERROR_TYPE_DEBUG,

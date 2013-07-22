@@ -133,9 +133,9 @@ struct GSF_PeerPerformanceData
   GNUNET_PEER_Id pid;
 
   /**
-   * Trust rating for this peer
+   * Respect rating for this peer
    */
-  uint32_t trust;
+  uint32_t respect;
 
   /**
    * Number of pending queries (replies are not counted)
@@ -384,12 +384,23 @@ GSF_connected_peer_change_preference_ (struct GSF_ConnectedPeer *cp,
 /**
  * Obtain the identity of a connected peer.
  *
- * @param cp peer to reserve bandwidth from
+ * @param cp peer to get identity of
  * @param id identity to set (written to)
  */
 void
 GSF_connected_peer_get_identity_ (const struct GSF_ConnectedPeer *cp,
                                   struct GNUNET_PeerIdentity *id);
+
+
+/**
+ * Obtain the identity of a connected peer.
+ *
+ * @param cp peer to get identity of
+ * @return reference to peer identity, valid until peer disconnects (!)
+ */
+const struct GNUNET_PeerIdentity *
+GSF_connected_peer_get_identity2_ (const struct GSF_ConnectedPeer *cp);
+
 
 
 /**

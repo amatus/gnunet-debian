@@ -3,12 +3,15 @@
 #endif
 
 if HAVE_EXPERIMENTAL
- EXP_DIR = chat dv stream regex
+ EXP_DIR = chat dv consensus sysmon
 endif
 
 if LINUX
 # All of these currently only work on GNU/Linux
- LINUX_DIR = dns gns exit vpn pt
+ LINUX_DIR = dns exit vpn gns pt
+endif
+if MINGW
+ MINGW_DIR = dns gns
 endif
 
 if HAVE_MYSQL
@@ -28,6 +31,7 @@ SUBDIRS = \
   block \
   statistics \
   arm \
+  testing \
   peerinfo \
   $(MYSQL_DIR) \
   $(POSTGRES_DIR) \
@@ -39,17 +43,20 @@ SUBDIRS = \
   nat \
   fragmentation \
   transport \
+  ats-tool \
   peerinfo-tool \
   core \
-  testing \
   testbed \
   nse \
   dht \
   hostlist \
   topology \
-  fs \
+  regex \
   mesh \
   lockmanager \
+  stream \
+  fs \
   $(LINUX_DIR) \
+  $(MINGW_DIR) \
   integration-tests \
   $(EXP_DIR) 

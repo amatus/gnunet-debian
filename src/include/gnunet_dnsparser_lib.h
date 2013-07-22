@@ -31,6 +31,17 @@
 #include "gnunet_common.h"
 
 /**
+ * Maximum length of a label in DNS.
+ */
+#define GNUNET_DNSPARSER_MAX_LABEL_LENGTH 63
+
+/**
+ * Maximum length of a name in DNS.
+ */
+#define GNUNET_DNSPARSER_MAX_NAME_LENGTH 253
+
+
+/**
  * A few common DNS types.
  */
 #define GNUNET_DNSPARSER_TYPE_A 1
@@ -41,6 +52,8 @@
 #define GNUNET_DNSPARSER_TYPE_MX 15
 #define GNUNET_DNSPARSER_TYPE_TXT 16
 #define GNUNET_DNSPARSER_TYPE_AAAA 28
+#define GNUNET_DNSPARSER_TYPE_SRV 33
+#define GNUNET_DNSPARSER_TYPE_TLSA 52
 
 /**
  * A few common DNS classes (ok, only one is common, but I list a
@@ -78,6 +91,7 @@
  */
 struct GNUNET_DNSPARSER_Flags
 {
+#if __BYTE_ORDER == __LITTLE_ENDIAN
   /**
    * Set to 1 if recursion is desired (client -> server)
    */
@@ -127,6 +141,61 @@ struct GNUNET_DNSPARSER_Flags
    * Set to 1 if recursion is available (server -> client)
    */
   unsigned int recursion_available  : 1 GNUNET_PACKED; 
+#elif __BYTE_ORDER == __BIG_ENDIAN
+  
+  /**
+   * query:0, response:1
+   */
+  unsigned int query_or_response    : 1 GNUNET_PACKED;  
+  
+  /**
+   * See GNUNET_DNSPARSER_OPCODE_ defines.
+   */
+  unsigned int opcode               : 4 GNUNET_PACKED;  
+  
+  /**
+   * Set to 1 if this is an authoritative answer
+   */
+  unsigned int authoritative_answer : 1 GNUNET_PACKED;
+  
+  /**
+   * Set to 1 if message is truncated
+   */
+  unsigned int message_truncated    : 1 GNUNET_PACKED; 
+  
+  /**
+   * Set to 1 if recursion is desired (client -> server)
+   */
+  unsigned int recursion_desired    : 1 GNUNET_PACKED;  
+
+ 
+  /**
+   * Set to 1 if recursion is available (server -> client)
+   */
+  unsigned int recursion_available  : 1 GNUNET_PACKED;
+  
+  /**
+   * Always zero.
+   */
+  unsigned int zero                 : 1 GNUNET_PACKED;
+  
+  /**
+   * Response has been cryptographically verified, RFC 4035.
+   */
+  unsigned int authenticated_data   : 1 GNUNET_PACKED;
+  
+  /**
+   * See RFC 4035.
+   */
+  unsigned int checking_disabled    : 1 GNUNET_PACKED; 
+  
+  /**
+   * See GNUNET_DNSPARSER_RETURN_CODE_ defines.
+   */  
+  unsigned int return_code          : 4 GNUNET_PACKED; 
+#else
+  #error byteorder undefined
+#endif
   
 } GNUNET_GCC_STRUCT_LAYOUT;
 
@@ -139,6 +208,10 @@ struct GNUNET_DNSPARSER_Query
 
   /**
    * Name of the record that the query is for (0-terminated).
+   * In UTF-8 format.  The library will convert from and to DNS-IDNA 
+   * as necessary.  Use 'GNUNET_DNSPARSER_check_label' to test if an
+   * individual label is well-formed.  If a given name is not well-formed,
+   * creating the DNS packet will fail.
    */
   char *name;
 
@@ -168,8 +241,82 @@ struct GNUNET_DNSPARSER_MxRecord
 
   /**
    * Name of the mail server.
+   * In UTF-8 format.  The library will convert from and to DNS-IDNA 
+   * as necessary.  Use 'GNUNET_DNSPARSER_check_label' to test if an
+   * individual label is well-formed.  If a given name is not well-formed,
+   * creating the DNS packet will fail.
    */
   char *mxhost;
+
+};
+
+
+/**
+ * Information from SRV records (RFC 2782).  The 'service', 'proto'
+ * and 'domain_name' fields together give the DNS-name which for SRV
+ * records is of the form "_$SERVICE._$PROTO.$DOMAIN_NAME".  The DNS
+ * parser provides the full name in 'struct DNSPARSER_Record' and the
+ * individual components in the respective fields of this struct.
+ * When serializing, you CAN set the 'name' field of 'struct
+ * GNUNET_DNSPARSER_Record' to NULL, in which case the DNSPARSER code
+ * will populate 'name' from the 'service', 'proto' and 'domain_name'
+ * fields in this struct.
+ */
+struct GNUNET_DNSPARSER_SrvRecord
+{
+  
+  /**
+   * Service name without the underscore (!).  Note that RFC 6335 clarifies the
+   * set of legal characters for service names.
+   * In UTF-8 format.  The library will convert from and to DNS-IDNA 
+   * as necessary.  Use 'GNUNET_DNSPARSER_check_label' to test if an
+   * individual label is well-formed.  If a given name is not well-formed,
+   * creating the DNS packet will fail.
+   */
+  char *service;
+
+  /**
+   * Transport protocol (typcially "tcp" or "udp", but others might be allowed).
+   * Without the underscore (!).
+   */
+  char *proto;
+
+  /**
+   * Domain name for which the record is valid
+   * In UTF-8 format.  The library will convert from and to DNS-IDNA 
+   * as necessary.  Use 'GNUNET_DNSPARSER_check_label' to test if an
+   * individual label is well-formed.  If a given name is not well-formed,
+   * creating the DNS packet will fail.
+   */
+  char *domain_name;
+
+  /**
+   * Hostname offering the service.
+   * In UTF-8 format.  The library will convert from and to DNS-IDNA 
+   * as necessary.  Use 'GNUNET_DNSPARSER_check_label' to test if an
+   * individual label is well-formed.  If a given name is not well-formed,
+   * creating the DNS packet will fail.
+   */
+  char *target;
+
+  /**
+   * Preference for this entry (lower value is higher preference).  Clients
+   * will contact hosts from the lowest-priority group first and fall back
+   * to higher priorities if the low-priority entries are unavailable.
+   */
+  uint16_t priority;
+
+  /**
+   * Relative weight for records with the same priority.  Clients will use
+   * the hosts of the same (lowest) priority with a probability proportional
+   * to the weight given.
+   */
+  uint16_t weight;
+
+  /**
+   * TCP or UDP port of the service.
+   */
+  uint16_t port;
 
 };
 
@@ -183,12 +330,20 @@ struct GNUNET_DNSPARSER_SoaRecord
   /**
    *The domainname of the name server that was the
    * original or primary source of data for this zone.
+   * In UTF-8 format.  The library will convert from and to DNS-IDNA 
+   * as necessary.  Use 'GNUNET_DNSPARSER_check_label' to test if an
+   * individual label is well-formed.  If a given name is not well-formed,
+   * creating the DNS packet will fail.
    */
   char *mname;
 
   /**
    * A domainname which specifies the mailbox of the
    * person responsible for this zone.
+   * In UTF-8 format.  The library will convert from and to DNS-IDNA 
+   * as necessary.  Use 'GNUNET_DNSPARSER_check_label' to test if an
+   * individual label is well-formed.  If a given name is not well-formed,
+   * creating the DNS packet will fail.
    */
   char *rname;
 
@@ -249,14 +404,25 @@ struct GNUNET_DNSPARSER_Record
 
   /**
    * Name of the record that the query is for (0-terminated).
+   * In UTF-8 format.  The library will convert from and to DNS-IDNA 
+   * as necessary.  Use 'GNUNET_DNSPARSER_check_label' to test if an
+   * individual label is well-formed.  If a given name is not well-formed,
+   * creating the DNS packet will fail.
    */
   char *name;
 
+  /**
+   * Payload of the record (which one of these is valid depends on the 'type').
+   */
   union 
   {
 
     /**
      * For NS, CNAME and PTR records, this is the uncompressed 0-terminated hostname.
+   * In UTF-8 format.  The library will convert from and to DNS-IDNA 
+   * as necessary.  Use 'GNUNET_DNSPARSER_check_label' to test if an
+   * individual label is well-formed.  If a given name is not well-formed,
+   * creating the DNS packet will fail.
      */
     char *hostname;
     
@@ -269,6 +435,11 @@ struct GNUNET_DNSPARSER_Record
      * MX data for MX records.
      */
     struct GNUNET_DNSPARSER_MxRecord *mx;
+
+    /**
+     * SRV data for SRV records.
+     */
+    struct GNUNET_DNSPARSER_SrvRecord *srv;
 
     /**
      * Raw data for all other types.
@@ -352,6 +523,31 @@ struct GNUNET_DNSPARSER_Packet
   uint16_t id;
 
 };
+
+
+/**
+ * Check if a label in UTF-8 format can be coded into valid IDNA.
+ * This can fail if the ASCII-conversion becomes longer than 63 characters.
+ *
+ * @param label label to check (UTF-8 string)
+ * @return GNUNET_OK if the label can be converted to IDNA,
+ *         GNUNET_SYSERR if the label is not valid for DNS names
+ */
+int
+GNUNET_DNSPARSER_check_label (const char *label);
+
+
+/**
+ * Check if a hostname in UTF-8 format can be coded into valid IDNA.
+ * This can fail if a label becomes longer than 63 characters or if
+ * the entire name exceeds 253 characters.
+ *
+ * @param name name to check (UTF-8 string)
+ * @return GNUNET_OK if the label can be converted to IDNA,
+ *         GNUNET_SYSERR if the label is not valid for DNS names
+ */
+int
+GNUNET_DNSPARSER_check_name (const char *name);
 
 
 /**

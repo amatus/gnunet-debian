@@ -27,7 +27,6 @@
  * @brief implementation of CRC16 and CRC32
  * @author Christian Grothoff
  */
-
 #include "platform.h"
 #include "gnunet_common.h"
 #include "gnunet_crypto_lib.h"
@@ -51,7 +50,7 @@ static uLong crc_table[256];
 
 /*
  * This routine writes each crc_table entry exactly once,
- * with the ccorrect final value.  Thus, it is safe to call
+ * with the correct final value.  Thus, it is safe to call
  * even on a table that someone else is using concurrently.
  */
 static void

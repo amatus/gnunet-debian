@@ -109,6 +109,16 @@ struct GNUNET_HELPER_Handle
   struct GNUNET_SERVER_MessageStreamTokenizer *mst;
 
   /**
+   * The exception callback
+   */
+  GNUNET_HELPER_ExceptionCallback exp_cb;
+
+  /**
+   * The closure for callbacks
+   */
+  void *cb_cls;
+
+  /**
    * First message queued for transmission to helper.
    */
   struct GNUNET_HELPER_SendHandle *sh_head;
@@ -121,12 +131,12 @@ struct GNUNET_HELPER_Handle
   /**
    * Binary to run.
    */
-  const char *binary_name;
+  char *binary_name;
 
   /**
    * NULL-terminated list of command-line arguments.
    */
-  char *const *binary_argv;
+  char **binary_argv;
 		    
   /**
    * Task to read from the helper.
@@ -142,6 +152,12 @@ struct GNUNET_HELPER_Handle
    * Restart task.
    */
   GNUNET_SCHEDULER_TaskIdentifier restart_task;
+
+  /**
+   * Does the helper support the use of a control pipe for signalling?
+   */
+  int with_control_pipe;
+
 };
 
 
@@ -244,20 +260,31 @@ helper_read (void *cls,
                 _("Error reading from `%s': %s\n"),
 		h->binary_name,
 		STRERROR (errno));
+    if (NULL != h->exp_cb)
+    {
+      h->exp_cb (h->cb_cls);
+      GNUNET_HELPER_stop (h);
+      return;
+    }
     stop_helper (h);
     /* Restart the helper */
     h->restart_task =
-      GNUNET_SCHEDULER_add_delayed (GNUNET_TIME_UNIT_SECONDS,
-				    &restart_task, h);
+	GNUNET_SCHEDULER_add_delayed (GNUNET_TIME_UNIT_SECONDS, &restart_task, h);
     return;
   }
   if (0 == t)
   {
     /* this happens if the helper is shut down via a 
        signal, so it is not a "hard" error */
-    GNUNET_log (GNUNET_ERROR_TYPE_INFO, 
-		_("Got 0 bytes from helper `%s' (EOF)\n"),
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, 
+		"Got 0 bytes from helper `%s' (EOF)\n",
 		h->binary_name);
+    if (NULL != h->exp_cb)
+    {
+      h->exp_cb (h->cb_cls);
+      GNUNET_HELPER_stop (h);
+      return;
+    }
     stop_helper (h);
     /* Restart the helper */
     h->restart_task =
@@ -265,8 +292,8 @@ helper_read (void *cls,
 				    &restart_task, h);
     return;
   }
-  GNUNET_log (GNUNET_ERROR_TYPE_INFO, 
-	      _("Got %u bytes from helper `%s'\n"),
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, 
+	      "Got %u bytes from helper `%s'\n",
 	      (unsigned int) t,
 	      h->binary_name);
   h->read_task = GNUNET_SCHEDULER_add_read_file (GNUNET_TIME_UNIT_FOREVER_REL,
@@ -277,6 +304,12 @@ helper_read (void *cls,
     GNUNET_log (GNUNET_ERROR_TYPE_WARNING, 
 		_("Failed to parse inbound message from helper `%s'\n"),
 		h->binary_name);
+    if (NULL != h->exp_cb)
+    {
+      h->exp_cb (h->cb_cls);
+      GNUNET_HELPER_stop (h);
+      return;
+    }     
     stop_helper (h);
     /* Restart the helper */
     h->restart_task =
@@ -306,18 +339,18 @@ start_helper (struct GNUNET_HELPER_Handle *h)
 				    &restart_task, h);    
     return;
   }
-  GNUNET_log (GNUNET_ERROR_TYPE_INFO,
-	      _("Starting HELPER process `%s'\n"),
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+	      "Starting HELPER process `%s'\n",
 	      h->binary_name);
   h->fh_from_helper =
       GNUNET_DISK_pipe_handle (h->helper_out, GNUNET_DISK_PIPE_END_READ);
   h->fh_to_helper =
       GNUNET_DISK_pipe_handle (h->helper_in, GNUNET_DISK_PIPE_END_WRITE);
   h->helper_proc =
-      GNUNET_OS_start_process_vap (GNUNET_NO,
-				   h->helper_in, h->helper_out,
-				   h->binary_name,
-				   h->binary_argv);
+    GNUNET_OS_start_process_vap (h->with_control_pipe, GNUNET_OS_INHERIT_STD_ERR, 
+				 h->helper_in, h->helper_out,
+				 h->binary_name,
+				 h->binary_argv);
   if (NULL == h->helper_proc)
   {
     /* failed to start process? try again later... */
@@ -354,27 +387,47 @@ restart_task (void *cls,
 
 
 /**
- * @brief Starts a helper and begins reading from it
+ * Starts a helper and begins reading from it. The helper process is
+ * restarted when it dies except when it is stopped using GNUNET_HELPER_stop()
+ * or when the exp_cb callback is not NULL.
  *
+ * @param with_control_pipe does the helper support the use of a control pipe for signalling?
  * @param binary_name name of the binary to run
  * @param binary_argv NULL-terminated list of arguments to give when starting the binary (this
  *                    argument must not be modified by the client for
- *                     the lifetime of the helper h)
+ *                     the lifetime of the helper handle)
  * @param cb function to call if we get messages from the helper
- * @param cb_cls Closure for the callback
- * @return the new H, NULL on error
+ * @param exp_cb the exception callback to call. Set this to NULL if the helper
+ *          process has to be restarted automatically when it dies/crashes
+ * @param cb_cls closure for the above callback
+ * @return the new Handle, NULL on error
  */
-struct GNUNET_HELPER_Handle*
-GNUNET_HELPER_start (const char *binary_name,
+struct GNUNET_HELPER_Handle *
+GNUNET_HELPER_start (int with_control_pipe,
+		     const char *binary_name,
 		     char *const binary_argv[],
-		     GNUNET_SERVER_MessageTokenizerCallback cb, void *cb_cls)
+		     GNUNET_SERVER_MessageTokenizerCallback cb,
+		     GNUNET_HELPER_ExceptionCallback exp_cb,
+		     void *cb_cls)
 {
-  struct GNUNET_HELPER_Handle*h;
+  struct GNUNET_HELPER_Handle *h;
+  unsigned int c;
 
-  h =  GNUNET_malloc (sizeof (struct GNUNET_HELPER_Handle));
-  h->binary_name = binary_name;
-  h->binary_argv = binary_argv;
-  h->mst = GNUNET_SERVER_mst_create (cb, cb_cls);
+  h = GNUNET_malloc (sizeof (struct GNUNET_HELPER_Handle));
+  h->with_control_pipe = with_control_pipe;
+  /* Lookup in libexec path only if we are starting gnunet helpers */
+  if (NULL != strstr (binary_name, "gnunet"))
+    h->binary_name = GNUNET_OS_get_libexec_binary_path (binary_name);
+  else
+    h->binary_name = strdup (binary_name);
+  for (c = 0; NULL != binary_argv[c]; c++);
+  h->binary_argv = GNUNET_malloc (sizeof (char *) * (c + 1));
+  for (c = 0; NULL != binary_argv[c]; c++)
+    h->binary_argv[c] = GNUNET_strdup (binary_argv[c]);
+  h->binary_argv[c] = NULL;
+  h->cb_cls = cb_cls;
+  h->mst = GNUNET_SERVER_mst_create (cb, h->cb_cls);
+  h->exp_cb = exp_cb;
   start_helper (h);
   return h;
 }
@@ -389,7 +442,9 @@ void
 GNUNET_HELPER_stop (struct GNUNET_HELPER_Handle *h)
 {
   struct GNUNET_HELPER_SendHandle *sh;
+  unsigned int c;
 
+  h->exp_cb = NULL;
   /* signal pending writes that we were stopped */
   while (NULL != (sh = h->sh_head))
   {
@@ -402,6 +457,10 @@ GNUNET_HELPER_stop (struct GNUNET_HELPER_Handle *h)
   }
   stop_helper (h);
   GNUNET_SERVER_mst_destroy (h->mst);
+  GNUNET_free (h->binary_name);
+  for (c = 0; h->binary_argv[c] != NULL; c++)
+    GNUNET_free (h->binary_argv[c]);
+  GNUNET_free (h->binary_argv);
   GNUNET_free (h);
 }
 
@@ -440,6 +499,12 @@ helper_write (void *cls,
                 _("Error writing to `%s': %s\n"),
 		h->binary_name,
 		STRERROR (errno));
+    if (NULL != h->exp_cb)
+    {
+      h->exp_cb (h->cb_cls);
+      GNUNET_HELPER_stop (h);
+      return;
+    }
     stop_helper (h);
     /* Restart the helper */
     h->restart_task =

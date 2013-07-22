@@ -231,7 +231,7 @@ static void
 decrementBit (char *bitArray, unsigned int bitIdx,
               const struct GNUNET_DISK_FileHandle *fh)
 {
-  OFF_T fileSlot;
+  OFF_T fileslot;
   unsigned char value;
   unsigned int high;
   unsigned int low;
@@ -240,9 +240,13 @@ decrementBit (char *bitArray, unsigned int bitIdx,
   if (GNUNET_DISK_handle_invalid (fh))
     return;                     /* cannot decrement! */
   /* Each char slot in the counter file holds two 4 bit counters */
-  fileSlot = bitIdx / 2;
+  fileslot = bitIdx / 2;
   targetLoc = bitIdx % 2;
-  GNUNET_DISK_file_seek (fh, fileSlot, GNUNET_DISK_SEEK_SET);
+  if (GNUNET_SYSERR == GNUNET_DISK_file_seek (fh, fileslot, GNUNET_DISK_SEEK_SET))
+    {
+      GNUNET_log_strerror (GNUNET_ERROR_TYPE_ERROR, "seek");
+      return;
+    }
   if (1 != GNUNET_DISK_file_read (fh, &value, 1))
     value = 0;
   low = value & 0xF;
@@ -268,7 +272,11 @@ decrementBit (char *bitArray, unsigned int bitIdx,
     }
   }
   value = ((high << 4) | low);
-  GNUNET_DISK_file_seek (fh, fileSlot, GNUNET_DISK_SEEK_SET);
+  if (GNUNET_SYSERR == GNUNET_DISK_file_seek (fh, fileslot, GNUNET_DISK_SEEK_SET))
+    {
+      GNUNET_log_strerror (GNUNET_ERROR_TYPE_ERROR, "seek");
+      return;
+    }
   GNUNET_assert (1 == GNUNET_DISK_file_write (fh, &value, 1));
 }
 
@@ -340,9 +348,9 @@ typedef int (*BitIterator) (void *cls,
  */
 static void
 iterateBits (const struct GNUNET_CONTAINER_BloomFilter *bf,
-             BitIterator callback, void *arg, const GNUNET_HashCode * key)
+             BitIterator callback, void *arg, const struct GNUNET_HashCode * key)
 {
-  GNUNET_HashCode tmp[2];
+  struct GNUNET_HashCode tmp[2];
   int bitCount;
   unsigned int round;
   unsigned int slot = 0;
@@ -354,7 +362,7 @@ iterateBits (const struct GNUNET_CONTAINER_BloomFilter *bf,
   GNUNET_assert (bf->bitArraySize * 8LL > bf->bitArraySize);
   while (bitCount > 0)
   {
-    while (slot < (sizeof (GNUNET_HashCode) / sizeof (uint32_t)))
+    while (slot < (sizeof (struct GNUNET_HashCode) / sizeof (uint32_t)))
     {
       if (GNUNET_YES !=
           callback (arg, bf,
@@ -368,7 +376,7 @@ iterateBits (const struct GNUNET_CONTAINER_BloomFilter *bf,
     }
     if (bitCount > 0)
     {
-      GNUNET_CRYPTO_hash (&tmp[round & 1], sizeof (GNUNET_HashCode),
+      GNUNET_CRYPTO_hash (&tmp[round & 1], sizeof (struct GNUNET_HashCode),
                           &tmp[(round + 1) & 1]);
       round++;
       slot = 0;
@@ -696,7 +704,7 @@ GNUNET_CONTAINER_bloomfilter_clear (struct GNUNET_CONTAINER_BloomFilter *bf)
  */
 int
 GNUNET_CONTAINER_bloomfilter_test (const struct GNUNET_CONTAINER_BloomFilter
-                                   *bf, const GNUNET_HashCode * e)
+                                   *bf, const struct GNUNET_HashCode * e)
 {
   int res;
 
@@ -716,7 +724,7 @@ GNUNET_CONTAINER_bloomfilter_test (const struct GNUNET_CONTAINER_BloomFilter
  */
 void
 GNUNET_CONTAINER_bloomfilter_add (struct GNUNET_CONTAINER_BloomFilter *bf,
-                                  const GNUNET_HashCode * e)
+                                  const struct GNUNET_HashCode * e)
 {
   if (NULL == bf)
     return;
@@ -801,7 +809,7 @@ GNUNET_CONTAINER_bloomfilter_or2 (struct GNUNET_CONTAINER_BloomFilter *bf,
  */
 void
 GNUNET_CONTAINER_bloomfilter_remove (struct GNUNET_CONTAINER_BloomFilter *bf,
-                                     const GNUNET_HashCode * e)
+                                     const struct GNUNET_HashCode * e)
 {
   if (NULL == bf)
     return;
@@ -827,7 +835,7 @@ GNUNET_CONTAINER_bloomfilter_resize (struct GNUNET_CONTAINER_BloomFilter *bf,
                                      void *iterator_cls, size_t size,
                                      unsigned int k)
 {
-  GNUNET_HashCode hc;
+  struct GNUNET_HashCode hc;
   unsigned int i;
 
   GNUNET_free (bf->bitArray);

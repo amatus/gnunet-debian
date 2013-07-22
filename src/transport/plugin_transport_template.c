@@ -54,6 +54,11 @@ struct Plugin;
  */
 struct Session
 {
+  /**
+   * To whom are we talking to (set to our identity
+   * if we are still waiting for the welcome message)
+   */
+  struct GNUNET_PeerIdentity sender;
 
   /**
    * Stored in a linked list.
@@ -81,12 +86,6 @@ struct Session
    * Closure for transmit_cont.
    */
   void *transmit_cont_cls;
-
-  /**
-   * To whom are we talking to (set to our identity
-   * if we are still waiting for the welcome message)
-   */
-  struct GNUNET_PeerIdentity sender;
 
   /**
    * At what time did we reset last_received last?
@@ -257,7 +256,43 @@ template_plugin_address_to_string (void *cls, const void *addr, size_t addrlen)
 }
 
 
+/**
+ * Function called to convert a string address to
+ * a binary address.
+ *
+ * @param cls closure ('struct Plugin*')
+ * @param addr string address
+ * @param addrlen length of the address
+ * @param buf location to store the buffer
+ * @param added location to store the number of bytes in the buffer.
+ *        If the function returns GNUNET_SYSERR, its contents are undefined.
+ * @return GNUNET_OK on success, GNUNET_SYSERR on failure
+ */
+static int
+template_plugin_string_to_address (void *cls, const char *addr, uint16_t addrlen,
+    void **buf, size_t *added)
+{
+  GNUNET_break (0);
+  return GNUNET_SYSERR;
+}
 
+
+/**
+ * Create a new session to transmit data to the target
+ * This session will used to send data to this peer and the plugin will
+ * notify us by calling the env->session_end function
+ *
+ * @param cls closure
+ * @param address pointer to the GNUNET_HELLO_Address
+ * @return the session if the address is valid, NULL otherwise
+ */
+static struct Session *
+template_plugin_get_session (void *cls,
+                        const struct GNUNET_HELLO_Address *address)
+{
+  GNUNET_break (0);
+  return NULL;
+}
 
 /**
  * Entry point for the plugin.
@@ -269,6 +304,18 @@ gnunet_plugin_transport_template_init (void *cls)
   struct GNUNET_TRANSPORT_PluginFunctions *api;
   struct Plugin *plugin;
 
+  if (NULL == env->receive)
+  {
+    /* run in 'stub' mode (i.e. as part of gnunet-peerinfo), don't fully
+       initialze the plugin or the API */
+    api = GNUNET_malloc (sizeof (struct GNUNET_TRANSPORT_PluginFunctions));
+    api->cls = NULL;
+    api->address_to_string = &template_plugin_address_to_string;
+    api->string_to_address = &template_plugin_string_to_address;
+    api->address_pretty_printer = &template_plugin_address_pretty_printer;
+    return api;
+  }
+
   plugin = GNUNET_malloc (sizeof (struct Plugin));
   plugin->env = env;
   api = GNUNET_malloc (sizeof (struct GNUNET_TRANSPORT_PluginFunctions));
@@ -278,6 +325,9 @@ gnunet_plugin_transport_template_init (void *cls)
   api->address_pretty_printer = &template_plugin_address_pretty_printer;
   api->check_address = &template_plugin_address_suggested;
   api->address_to_string = &template_plugin_address_to_string;
+  api->string_to_address = &template_plugin_string_to_address;
+  api->get_session = &template_plugin_get_session;
+
   return api;
 }
 

@@ -32,6 +32,11 @@
 static unsigned int query_type;
 
 /**
+ * The key used in the DHT
+ */
+struct GNUNET_HashCode key;
+
+/**
  * The key for the query
  */
 static char *query_key;
@@ -55,6 +60,11 @@ static unsigned int replication = 5;
  * Be verbose
  */
 static int verbose;
+
+/**
+ * Use DHT demultixplex_everywhere
+ */
+static int demultixplex_everywhere;
 
 /**
  * Handle to the DHT
@@ -105,7 +115,7 @@ message_sent_cont (void *cls, int success)
     switch (success)
     {
     case GNUNET_OK:
-      FPRINTF (stderr, "%s",  _("PUT request sent!\n"));
+      FPRINTF (stderr, "%s `%s'!\n",  _("PUT request sent with key"), GNUNET_h2s_full(&key));
       break;
     case GNUNET_NO:
       FPRINTF (stderr, "%s",  _("Timeout sending PUT request!\n"));
@@ -135,28 +145,23 @@ run (void *cls, char *const *args, const char *cfgfile,
 {
   struct GNUNET_TIME_Relative timeout;
   struct GNUNET_TIME_Absolute expiration;
-  GNUNET_HashCode key;
 
   cfg = c;
 
-  if ((query_key == NULL) || (data == NULL))
+  if ((NULL == query_key) || (NULL == data))
   {
     FPRINTF (stderr, "%s",  _("Must provide KEY and DATA for DHT put!\n"));
     ret = 1;
     return;
   }
 
-  dht_handle = GNUNET_DHT_connect (cfg, 1);
-  if (dht_handle == NULL)
+  if (NULL == (dht_handle = GNUNET_DHT_connect (cfg, 1)))
   {
     FPRINTF (stderr, _("Could not connect to %s service!\n"), "DHT");
     ret = 1;
     return;
   }
-  else if (verbose)
-    FPRINTF (stderr, _("Connected to %s service!\n"), "DHT");
-
-  if (query_type == GNUNET_BLOCK_TYPE_ANY)      /* Type of data not set */
+  if (GNUNET_BLOCK_TYPE_ANY == query_type)      /* Type of data not set */
     query_type = GNUNET_BLOCK_TYPE_TEST;
 
   GNUNET_CRYPTO_hash (query_key, strlen (query_key), &key);
@@ -167,11 +172,12 @@ run (void *cls, char *const *args, const char *cfgfile,
       GNUNET_TIME_relative_to_absolute (GNUNET_TIME_relative_multiply
                                         (GNUNET_TIME_UNIT_SECONDS,
                                          expiration_seconds));
-
   if (verbose)
     FPRINTF (stderr, _("Issuing put request for `%s' with data `%s'!\n"),
              query_key, data);
-  GNUNET_DHT_put (dht_handle, &key, replication, GNUNET_DHT_RO_NONE, query_type,
+  GNUNET_DHT_put (dht_handle, &key, replication,
+                  (demultixplex_everywhere) ? GNUNET_DHT_RO_DEMULTIPLEX_EVERYWHERE : GNUNET_DHT_RO_NONE,
+                  query_type,
                   strlen (data), data, expiration, timeout, &message_sent_cont,
                   NULL);
 
@@ -191,6 +197,9 @@ static struct GNUNET_GETOPT_CommandLineOption options[] = {
   {'k', "key", "KEY",
    gettext_noop ("the query key"),
    1, &GNUNET_GETOPT_set_string, &query_key},
+  {'x', "demultiplex", NULL,
+   gettext_noop ("use DHT's demultiplex everywhere option"),
+   0, &GNUNET_GETOPT_set_one, &demultixplex_everywhere},
   {'r', "replication", "LEVEL",
    gettext_noop ("how many replicas to create"),
    1, &GNUNET_GETOPT_set_uint, &replication},
@@ -217,6 +226,9 @@ static struct GNUNET_GETOPT_CommandLineOption options[] = {
 int
 main (int argc, char *const *argv)
 {
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+
   return (GNUNET_OK ==
           GNUNET_PROGRAM_run (argc, argv, "gnunet-dht-put",
                               gettext_noop

@@ -92,7 +92,7 @@ static int ret;
 /**
  * Option '-d': duration of the mapping
  */
-static unsigned long long duration = 5 * 60;
+static struct GNUNET_TIME_Relative duration = { 5 * 60 * 1000} ;
 
 
 /**
@@ -173,15 +173,14 @@ run (void *cls, char *const *args, const char *cfgfile,
   int dst_af;
   int req_af;
   struct GNUNET_PeerIdentity peer; 
-  GNUNET_HashCode sd;
+  struct GNUNET_HashCode sd;
   const void *addr;
   struct in_addr v4;
   struct in6_addr v6;
   uint8_t protocol;
   struct GNUNET_TIME_Absolute etime;
 
-  etime = GNUNET_TIME_relative_to_absolute (GNUNET_TIME_relative_multiply (GNUNET_TIME_UNIT_SECONDS,
-									   (unsigned int) duration));
+  etime = GNUNET_TIME_relative_to_absolute (duration);
   GNUNET_SCHEDULER_add_delayed (GNUNET_TIME_UNIT_FOREVER_REL,
 				&do_disconnect, NULL);
   handle = GNUNET_VPN_connect (cfg);
@@ -301,9 +300,9 @@ main (int argc, char *const *argv)
     {'a', "after-connect", NULL,
      gettext_noop ("print IP address only after mesh tunnel has been created"),
      0, &GNUNET_GETOPT_set_one, &ipv6},
-    {'d', "duration", "SECONDS",
+    {'d', "duration", "TIME",
      gettext_noop ("how long should the mapping be valid for new tunnels?"),
-     1, &GNUNET_GETOPT_set_ulong, &duration},
+     1, &GNUNET_GETOPT_set_relative_time, &duration},
     {'i', "ip", "IP",
      gettext_noop ("destination IP for the tunnel"),
      1, &GNUNET_GETOPT_set_string, &target_ip},
@@ -323,11 +322,16 @@ main (int argc, char *const *argv)
     GNUNET_GETOPT_OPTION_VERBOSE (&verbosity),
     GNUNET_GETOPT_OPTION_END
   };
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "gnunet-vpn",
-                              gettext_noop
-                              ("Setup tunnels via VPN."), options,
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+
+  ret = (GNUNET_OK ==
+	 GNUNET_PROGRAM_run (argc, argv, "gnunet-vpn",
+			     gettext_noop
+			     ("Setup tunnels via VPN."), options,
                               &run, NULL)) ? ret : 1;
+  GNUNET_free ((void *) argv);
+  return ret;
 }
 
 

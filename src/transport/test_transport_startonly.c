@@ -27,21 +27,8 @@
  * C code apparently.
  */
 #include "platform.h"
-#include "gnunet_common.h"
-#include "gnunet_hello_lib.h"
-#include "gnunet_getopt_lib.h"
-#include "gnunet_os_lib.h"
-#include "gnunet_program_lib.h"
-#include "gnunet_scheduler_lib.h"
 #include "gnunet_transport_service.h"
-#include "transport.h"
 #include "transport-testing.h"
-
-#define VERBOSE GNUNET_NO
-
-#define VERBOSE_ARM GNUNET_NO
-
-#define START_ARM GNUNET_YES
 
 /**
  * How long until we give up on transmitting the message?
@@ -72,6 +59,7 @@ end ()
     GNUNET_SCHEDULER_cancel (timeout_task);
     timeout_task = GNUNET_SCHEDULER_NO_TASK;
   }
+  GNUNET_TRANSPORT_TESTING_done (tth);
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Exiting\n");
 }
 
@@ -86,7 +74,8 @@ end_badly (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 
   if (p1 != NULL)
     GNUNET_TRANSPORT_TESTING_stop_peer (tth, p1);
-
+  if (NULL != tth)
+    GNUNET_TRANSPORT_TESTING_done (tth);
   ret = GNUNET_SYSERR;
 }
 
@@ -150,8 +139,6 @@ run (void *cls, char *const *args, const char *cfgfile,
       FPRINTF (stderr, "..%i", i);
   }
 
-  tth = GNUNET_TRANSPORT_TESTING_init ();
-
   FPRINTF (stderr, "%s",  "\n");
   end ();
 }
@@ -160,19 +147,13 @@ int
 main (int argc, char *argv[])
 {
   GNUNET_log_setup ("test_transport_testing",
-#if VERBOSE
-                    "DEBUG",
-#else
                     "WARNING",
-#endif
+
                     NULL);
 
   char *const argv_1[] = { "test_transport_testing",
     "-c",
     "test_transport_api_data.conf",
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
     NULL
   };
 

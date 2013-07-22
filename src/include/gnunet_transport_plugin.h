@@ -44,6 +44,10 @@
  * useful since sometimes (i.e. for inbound TCP connections) a
  * connection may not have an address that can be used for meaningful
  * distinction between sessions to the same peer.
+ *
+ * Each 'struct Session' MUST start with the 'struct GNUNET_PeerIdentity'
+ * of the peer the session is for (which will be used for some error
+ * checking by the ATS code).
  */
 struct Session;
 
@@ -151,10 +155,12 @@ typedef struct GNUNET_ATS_Information
  * @param addr one of the addresses of the host
  *        the specific address format depends on the transport
  * @param addrlen length of the address
+ * @param dest_plugin plugin to use this address with
  */
 typedef void (*GNUNET_TRANSPORT_AddressNotification) (void *cls, int add_remove,
                                                       const void *addr,
-                                                      size_t addrlen);
+                                                      size_t addrlen,
+                                                      const char *dest_plugin);
 
 
 /**
@@ -185,8 +191,8 @@ typedef struct GNUNET_TIME_Relative (*GNUNET_TRANSPORT_TrafficReport) (void
 /**
  * Function that returns a HELLO message.
  */
-typedef const struct GNUNET_MessageHeader
-    *(*GNUNET_TRANSPORT_GetHelloCallback) (void);
+typedef const struct GNUNET_MessageHeader *
+    (*GNUNET_TRANSPORT_GetHelloCallback) (void);
 
 
 /**
@@ -277,11 +283,17 @@ struct GNUNET_TRANSPORT_PluginEnvironment
  *               GNUNET_SYSERR if the target disconnected;
  *               disconnect will ALSO be signalled using
  *               the ReceiveCallback.
+ * @param size_payload bytes of payload from transport service in message
+ * @param size_on_wire bytes required on wire for transmission,
+ *               0 if result == GNUNET_SYSERR
  */
 typedef void (*GNUNET_TRANSPORT_TransmitContinuation) (void *cls,
                                                        const struct
                                                        GNUNET_PeerIdentity *
-                                                       target, int result);
+                                                       target,
+                                                       int result,
+                                                       size_t size_payload,
+                                                       size_t size_on_wire);
 
 /**
  * The new send function with just the session and no address
@@ -434,7 +446,7 @@ typedef const char *(*GNUNET_TRANSPORT_AddressToString) (void *cls,
  *
  * @param cls closure ('struct Plugin*')
  * @param addr string address
- * @param addrlen length of the address
+ * @param addrlen length of the address including \0 termination
  * @param buf location to store the buffer
  *        If the function returns GNUNET_SYSERR, its contents are undefined.
  * @param added length of created address

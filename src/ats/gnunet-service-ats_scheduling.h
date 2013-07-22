@@ -115,6 +115,18 @@ GAS_handle_request_address_cancel (void *cls,
                                    struct GNUNET_SERVER_Client *client,
                                    const struct GNUNET_MessageHeader *message);
 
+
+/**
+ * Handle 'address add' messages from clients.
+ *
+ * @param cls unused, NULL
+ * @param client client that sent the request
+ * @param message the request message
+ */
+void
+GAS_handle_address_add (void *cls, struct GNUNET_SERVER_Client *client,
+                        const struct GNUNET_MessageHeader *message);
+
 /**
  * Handle 'address update' messages from clients.
  *
@@ -147,7 +159,8 @@ GAS_handle_address_in_use (void *cls, struct GNUNET_SERVER_Client *client,
  * @param message the request message
  */
 void
-GAS_handle_address_destroyed (void *cls, struct GNUNET_SERVER_Client *client,
+GAS_handle_address_destroyed (void *cls,
+                              struct GNUNET_SERVER_Client *client,
                               const struct GNUNET_MessageHeader *message);
 
 
@@ -155,9 +168,10 @@ GAS_handle_address_destroyed (void *cls, struct GNUNET_SERVER_Client *client,
  * Initialize scheduling subsystem.
  *
  * @param server handle to our server
+ * @param ah the address handle to use
  */
 void
-GAS_scheduling_init (struct GNUNET_SERVER_Handle *server);
+GAS_scheduling_init (struct GNUNET_SERVER_Handle *server, struct GAS_Addresses_Handle *ah);
 
 
 /**

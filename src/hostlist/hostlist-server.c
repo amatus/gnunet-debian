@@ -180,7 +180,7 @@ host_processor (void *cls, const struct GNUNET_PeerIdentity *peer,
   {
     GNUNET_assert (NULL == peer);
     pitr = NULL;
-    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+    GNUNET_log (GNUNET_ERROR_TYPE_INFO,
                 _("Error in communication with PEERINFO service: %s\n"),
                 err_msg);
     return;
@@ -270,7 +270,7 @@ access_handler_callback (void *cls, struct MHD_Connection *connection,
   if (NULL == *con_cls)
   {
     (*con_cls) = &dummy;
-    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, _("Sending 100 CONTINUE reply\n"));
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Sending 100 CONTINUE reply\n");
     return MHD_YES;             /* send 100 continue */
   }
   if (0 != *upload_data_size)
@@ -421,7 +421,7 @@ process_notify (void *cls, const struct GNUNET_PeerIdentity *peer,
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
               "Peerinfo is notifying us to rebuild our hostlist\n");
   if (NULL != err_msg)
-    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+    GNUNET_log (GNUNET_ERROR_TYPE_INFO,
                 _("Error in communication with PEERINFO service: %s\n"),
 		err_msg);
   if (NULL != pitr)
@@ -465,6 +465,7 @@ run_daemon (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
     hostlist_task_v6 = prepare_daemon (daemon_handle);
 }
 
+#define UNSIGNED_MHD_LONG_LONG unsigned MHD_LONG_LONG
 
 /**
  * Function that queries MHD's select sets and
@@ -481,7 +482,7 @@ prepare_daemon (struct MHD_Daemon *daemon_handle)
   struct GNUNET_NETWORK_FDSet *wws;
   struct GNUNET_NETWORK_FDSet *wes;
   int max;
-  unsigned MHD_LONG_LONG timeout;
+  UNSIGNED_MHD_LONG_LONG timeout;
   int haveto;
   struct GNUNET_TIME_Relative tv;
 

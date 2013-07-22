@@ -47,7 +47,7 @@
 
 
 
-#if defined(LINUX) || defined(CYGWIN)
+#if defined(LINUX) || defined(CYGWIN) || defined(GNU)
 #include <sys/vfs.h>
 #else
 #if defined(SOMEBSD) || defined(DARWIN)
@@ -274,9 +274,7 @@ GNUNET_DISK_file_seek (const struct GNUNET_DISK_FileHandle * h, OFF_T offset,
   LARGE_INTEGER new_pos;
   BOOL b;
 
-  static DWORD t[] = {[GNUNET_DISK_SEEK_SET] = FILE_BEGIN,
-    [GNUNET_DISK_SEEK_CUR] = FILE_CURRENT,[GNUNET_DISK_SEEK_END] = FILE_END
-  };
+  static DWORD t[] = { FILE_BEGIN, FILE_CURRENT, FILE_END };
   li.QuadPart = offset;
 
   b = SetFilePointerEx (h->h, li, &new_pos, t[whence]);
@@ -287,9 +285,7 @@ GNUNET_DISK_file_seek (const struct GNUNET_DISK_FileHandle * h, OFF_T offset,
   }
   return (OFF_T) new_pos.QuadPart;
 #else
-  static int t[] = {[GNUNET_DISK_SEEK_SET] = SEEK_SET,
-    [GNUNET_DISK_SEEK_CUR] = SEEK_CUR,[GNUNET_DISK_SEEK_END] = SEEK_END
-  };
+  static int t[] = { SEEK_SET, SEEK_CUR, SEEK_END };
 
   return lseek (h->fd, offset, t[whence]);
 #endif
@@ -393,21 +389,15 @@ GNUNET_DISK_file_get_identifiers (const char *filename, uint64_t * dev,
 
 
 /**
- * Create an (empty) temporary file on disk.  If the given name is not
- * an absolute path, the current 'TMPDIR' will be prepended.  In any case,
- * 6 random characters will be appended to the name to create a unique
- * filename.
+ * Create the name for a temporary file or directory from a template.
  *
- * @param t component to use for the name;
- *        does NOT contain "XXXXXX" or "/tmp/".
- * @return NULL on error, otherwise name of fresh
- *         file on disk in directory for temporary files
+ * @param t template (without XXXXX or "/tmp/")
+ * @return name ready for passing to 'mktemp' or 'mkdtemp', NULL on error
  */
-char *
-GNUNET_DISK_mktemp (const char *t)
+static char *
+mktemp_name (const char *t)
 {
   const char *tmpdir;
-  int fd;
   char *tmpl;
   char *fn;
 
@@ -419,7 +409,12 @@ GNUNET_DISK_mktemp (const char *t)
   {
     /* FIXME: This uses system codepage on W32, not UTF-8 */
     tmpdir = getenv ("TMPDIR");
-    tmpdir = tmpdir ? tmpdir : "/tmp";
+    if (NULL == tmpdir)
+      tmpdir = getenv ("TMP");
+    if (NULL == tmpdir)
+      tmpdir = getenv ("TEMP");  
+    if (NULL == tmpdir)
+      tmpdir = "/tmp";
     GNUNET_asprintf (&tmpl, "%s/%s%s", tmpdir, t, "XXXXXX");
   }
   else
@@ -438,12 +433,120 @@ GNUNET_DISK_mktemp (const char *t)
 #else
   fn = tmpl;
 #endif
-  /* FIXME: why is this not MKSTEMP()? This function is implemented in plibc.
-   * CG: really? If I put MKSTEMP here, I get a compilation error...
-   * It will assume that fn is UTF-8-encoded, if compiled with UTF-8 support.
-   */
-  fd = mkstemp (fn);
-  if (fd == -1)
+  return fn;
+}
+
+
+#if WINDOWS
+static char *
+mkdtemp (char *fn)
+{
+  char *random_fn;
+  char *tfn;
+
+  while (1)
+  {
+    tfn = GNUNET_strdup (fn);
+    random_fn = _mktemp (tfn);
+    if (NULL == random_fn)
+    {
+      GNUNET_free (tfn);
+      return NULL;
+    }
+    /* FIXME: assume fn to be UTF-8-encoded and do the right thing */
+    if (0 == CreateDirectoryA (tfn, NULL))
+    {
+      DWORD error = GetLastError ();
+      GNUNET_free (tfn);
+      if (ERROR_ALREADY_EXISTS == error)
+        continue;
+      return NULL;
+    }
+    break;
+  }
+  strcpy (fn, tfn);
+  return fn;
+}
+#endif
+
+/**
+ * Create an (empty) temporary directory on disk.  If the given name is not
+ * an absolute path, the current 'TMPDIR' will be prepended.  In any case,
+ * 6 random characters will be appended to the name to create a unique
+ * filename.
+ *
+ * @param t component to use for the name;
+ *        does NOT contain "XXXXXX" or "/tmp/".
+ * @return NULL on error, otherwise name of fresh
+ *         file on disk in directory for temporary files
+ */
+char *
+GNUNET_DISK_mkdtemp (const char *t)
+{
+  char *fn;
+
+  fn = mktemp_name (t);
+  if (fn != mkdtemp (fn))
+  {
+    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_ERROR, "mkstemp", fn);
+    GNUNET_free (fn);
+    return NULL;
+  }
+  return fn;
+}
+
+
+/**
+ * Move a file out of the way (create a backup) by
+ * renaming it to "orig.NUM~" where NUM is the smallest
+ * number that is not used yet.
+ *
+ * @param fil name of the file to back up
+ */
+void
+GNUNET_DISK_file_backup (const char *fil)
+{
+  size_t slen;
+  char *target;
+  unsigned int num;
+
+  slen = strlen (fil) + 20;
+  target = GNUNET_malloc (slen);
+  num = 0;
+  do
+  {
+    GNUNET_snprintf (target, slen,
+		     "%s.%u~",
+		     fil,
+		     num++);
+  } while (0 == access (target, F_OK));
+  if (0 != rename (fil, target))
+    GNUNET_log_strerror_file (GNUNET_ERROR_TYPE_ERROR,
+			      "rename",
+			      fil);
+  GNUNET_free (target);  
+}
+
+
+/**
+ * Create an (empty) temporary file on disk.  If the given name is not
+ * an absolute path, the current 'TMPDIR' will be prepended.  In any case,
+ * 6 random characters will be appended to the name to create a unique
+ * filename.
+ *
+ * @param t component to use for the name;
+ *        does NOT contain "XXXXXX" or "/tmp/".
+ * @return NULL on error, otherwise name of fresh
+ *         file on disk in directory for temporary files
+ */
+char *
+GNUNET_DISK_mktemp (const char *t)
+{
+  int fd;
+  char *fn;
+
+  fn = mktemp_name (t);
+  if (-1 == (fd = mkstemp (fn)))
   {
     LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_ERROR, "mkstemp", fn);
     GNUNET_free (fn);
@@ -515,17 +618,19 @@ GNUNET_DISK_get_blocks_available (const char *part)
 
 
 /**
- * Test if "fil" is a directory.
- * Will not print an error message if the directory
- * does not exist.  Will log errors if GNUNET_SYSERR is
- * returned (i.e., a file exists with the same name).
+ * Test if "fil" is a directory and listable. Optionally, also check if the
+ * directory is readable.  Will not print an error message if the directory does
+ * not exist.  Will log errors if GNUNET_SYSERR is returned (i.e., a file exists
+ * with the same name).
  *
  * @param fil filename to test
- * @return GNUNET_YES if yes, GNUNET_NO if not, GNUNET_SYSERR if it
- *   does not exist
+ * @param is_readable GNUNET_YES to additionally check if "fil" is readable;
+ *          GNUNET_NO to disable this check
+ * @return GNUNET_YES if yes, GNUNET_NO if not; GNUNET_SYSERR if it
+ *           does not exist or stat'ed
  */
 int
-GNUNET_DISK_directory_test (const char *fil)
+GNUNET_DISK_directory_test (const char *fil, int is_readable)
 {
   struct stat filestat;
   int ret;
@@ -534,18 +639,23 @@ GNUNET_DISK_directory_test (const char *fil)
   if (ret != 0)
   {
     if (errno != ENOENT)
-    {
       LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "stat", fil);
-      return GNUNET_SYSERR;
-    }
-    return GNUNET_NO;
+    return GNUNET_SYSERR;
   }
   if (!S_ISDIR (filestat.st_mode))
+  {
+    LOG (GNUNET_ERROR_TYPE_WARNING,
+         "A file already exits with the same name %s\n", fil);
     return GNUNET_NO;
-  if (ACCESS (fil, R_OK | X_OK) < 0)
+  }
+  if (GNUNET_YES == is_readable)
+    ret = ACCESS (fil, R_OK | X_OK);
+  else
+    ret = ACCESS (fil, X_OK);
+  if (ret < 0)
   {
     LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "access", fil);
-    return GNUNET_SYSERR;
+    return GNUNET_NO;
   }
   return GNUNET_YES;
 }
@@ -587,7 +697,7 @@ GNUNET_DISK_file_test (const char *fil)
     GNUNET_free (rdir);
     return GNUNET_NO;
   }
-  if (ACCESS (rdir, R_OK) < 0)
+  if (ACCESS (rdir, F_OK) < 0)
   {
     LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "access", rdir);
     GNUNET_free (rdir);
@@ -607,8 +717,9 @@ int
 GNUNET_DISK_directory_create (const char *dir)
 {
   char *rdir;
-  int len;
-  int pos;
+  unsigned int len;
+  unsigned int pos;
+  unsigned int pos2;
   int ret = GNUNET_OK;
 
   rdir = GNUNET_STRINGS_filename_expand (dir);
@@ -638,18 +749,45 @@ GNUNET_DISK_directory_create (const char *dir)
     pos = 3;                    /* strlen("C:\\") */
   }
 #endif
+  /* Check which low level directories already exist */
+  pos2 = len;
+  rdir[len] = DIR_SEPARATOR;
+  while (pos <= pos2)
+  {
+    if (DIR_SEPARATOR == rdir[pos2])
+    {
+      rdir[pos2] = '\0';
+      ret = GNUNET_DISK_directory_test (rdir, GNUNET_NO);
+      if (GNUNET_NO == ret)
+      {
+        GNUNET_free (rdir);
+        return GNUNET_SYSERR;
+      }
+      rdir[pos2] = DIR_SEPARATOR;
+      if (GNUNET_YES == ret)
+      {
+        pos2++;
+        break;
+      }
+    }
+    pos2--;
+  }
+  rdir[len] = '\0';
+  if (pos < pos2)
+    pos = pos2;
+  /* Start creating directories */
   while (pos <= len)
   {
     if ((rdir[pos] == DIR_SEPARATOR) || (pos == len))
     {
       rdir[pos] = '\0';
-      ret = GNUNET_DISK_directory_test (rdir);
-      if (ret == GNUNET_SYSERR)
+      ret = GNUNET_DISK_directory_test (rdir, GNUNET_NO);
+      if (GNUNET_NO == ret)
       {
         GNUNET_free (rdir);
         return GNUNET_SYSERR;
       }
-      if (ret == GNUNET_NO)
+      if (GNUNET_SYSERR == ret)
       {
 #ifndef MINGW
         ret = mkdir (rdir, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);        /* 755 */
@@ -728,7 +866,7 @@ GNUNET_DISK_file_read (const struct GNUNET_DISK_FileHandle * h, void *result,
 #ifdef MINGW
   DWORD bytesRead;
 
-  if (h->type != GNUNET_PIPE)
+  if (h->type != GNUNET_DISK_HANLDE_TYPE_PIPE)
   {
     if (!ReadFile (h->h, result, len, &bytesRead, NULL))
     {
@@ -770,7 +908,8 @@ GNUNET_DISK_file_read (const struct GNUNET_DISK_FileHandle * h, void *result,
  */
 ssize_t
 GNUNET_DISK_file_read_non_blocking (const struct GNUNET_DISK_FileHandle * h,
-    void *result, size_t len)
+				    void *result, 
+				    size_t len)
 {
   if (h == NULL)
   {
@@ -781,7 +920,7 @@ GNUNET_DISK_file_read_non_blocking (const struct GNUNET_DISK_FileHandle * h,
 #ifdef MINGW
   DWORD bytesRead;
 
-  if (h->type != GNUNET_PIPE)
+  if (h->type != GNUNET_DISK_HANLDE_TYPE_PIPE)
   {
     if (!ReadFile (h->h, result, len, &bytesRead, NULL))
     {
@@ -818,10 +957,14 @@ GNUNET_DISK_file_read_non_blocking (const struct GNUNET_DISK_FileHandle * h,
   /* set to non-blocking, read, then set back */
   flags = fcntl (h->fd, F_GETFL);
   if (0 == (flags & O_NONBLOCK))
-    fcntl (h->fd, F_SETFL, flags | O_NONBLOCK);
+    (void) fcntl (h->fd, F_SETFL, flags | O_NONBLOCK);
   ret = read (h->fd, result, len);
   if (0 == (flags & O_NONBLOCK))
-    fcntl (h->fd, F_SETFL, flags);
+    {
+      int eno = errno;
+      (void) fcntl (h->fd, F_SETFL, flags);
+      errno = eno;
+    }
   return ret;
 #endif
 }
@@ -871,7 +1014,7 @@ GNUNET_DISK_file_write (const struct GNUNET_DISK_FileHandle * h,
 #ifdef MINGW
   DWORD bytesWritten;
 
-  if (h->type != GNUNET_PIPE)
+  if (h->type != GNUNET_DISK_HANLDE_TYPE_PIPE)
   {
     if (!WriteFile (h->h, buffer, n, &bytesWritten, NULL))
     {
@@ -984,10 +1127,10 @@ GNUNET_DISK_file_write_blocking (const struct GNUNET_DISK_FileHandle * h,
   /* set to blocking, write, then set back */
   flags = fcntl (h->fd, F_GETFL);
   if (0 != (flags & O_NONBLOCK))
-    fcntl (h->fd, F_SETFL, flags - O_NONBLOCK);
+    (void) fcntl (h->fd, F_SETFL, flags - O_NONBLOCK);
   ret = write (h->fd, buffer, n);
   if (0 == (flags & O_NONBLOCK))
-    fcntl (h->fd, F_SETFL, flags);
+    (void) fcntl (h->fd, F_SETFL, flags);
   return ret;
 #endif
 }
@@ -1274,34 +1417,34 @@ remove_helper (void *unused, const char *fn)
  * caution.
  *
  *
- * @param fileName the file to remove
+ * @param filename the file to remove
  * @return GNUNET_OK on success, GNUNET_SYSERR on error
  */
 int
-GNUNET_DISK_directory_remove (const char *fileName)
+GNUNET_DISK_directory_remove (const char *filename)
 {
   struct stat istat;
 
-  if (0 != LSTAT (fileName, &istat))
+  if (0 != LSTAT (filename, &istat))
     return GNUNET_NO;           /* file may not exist... */
-  CHMOD (fileName, S_IWUSR | S_IRUSR | S_IXUSR);
-  if (UNLINK (fileName) == 0)
+  (void) CHMOD (filename, S_IWUSR | S_IRUSR | S_IXUSR);
+  if (UNLINK (filename) == 0)
     return GNUNET_OK;
   if ((errno != EISDIR) &&
       /* EISDIR is not sufficient in all cases, e.g.
        * sticky /tmp directory may result in EPERM on BSD.
        * So we also explicitly check "isDirectory" */
-      (GNUNET_YES != GNUNET_DISK_directory_test (fileName)))
+      (GNUNET_YES != GNUNET_DISK_directory_test (filename, GNUNET_YES)))
   {
-    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "rmdir", fileName);
+    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "rmdir", filename);
     return GNUNET_SYSERR;
   }
   if (GNUNET_SYSERR ==
-      GNUNET_DISK_directory_scan (fileName, &remove_helper, NULL))
+      GNUNET_DISK_directory_scan (filename, &remove_helper, NULL))
     return GNUNET_SYSERR;
-  if (0 != RMDIR (fileName))
+  if (0 != RMDIR (filename))
   {
-    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "rmdir", fileName);
+    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "rmdir", filename);
     return GNUNET_SYSERR;
   }
   return GNUNET_OK;
@@ -1635,9 +1778,12 @@ GNUNET_DISK_file_open (const char *fn, enum GNUNET_DISK_OpenFlags flags,
     h = INVALID_HANDLE_VALUE;
   if (h == INVALID_HANDLE_VALUE)
   {
+    int err;
     SetErrnoFromWinError (GetLastError ());
-    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "open", expfn);
+    err = errno;
+    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_INFO, "open", expfn);
     GNUNET_free (expfn);
+    errno = err;
     return NULL;
   }
 
@@ -1655,7 +1801,7 @@ GNUNET_DISK_file_open (const char *fn, enum GNUNET_DISK_OpenFlags flags,
   ret = GNUNET_malloc (sizeof (struct GNUNET_DISK_FileHandle));
 #ifdef MINGW
   ret->h = h;
-  ret->type = GNUNET_DISK_FILE;
+  ret->type = GNUNET_DISK_HANLDE_TYPE_FILE;
 #else
   ret->fd = fd;
 #endif
@@ -1698,6 +1844,57 @@ GNUNET_DISK_file_close (struct GNUNET_DISK_FileHandle *h)
 #endif
   GNUNET_free (h);
   return GNUNET_OK;
+}
+
+
+/**
+ * Get a handle from a native FD.
+ *
+ * @param fd native file descriptor
+ * @return file handle corresponding to the descriptor
+ */
+struct GNUNET_DISK_FileHandle *
+GNUNET_DISK_get_handle_from_native (FILE *fd)
+{
+  struct GNUNET_DISK_FileHandle *fh;
+  int fno;
+#if MINGW
+  intptr_t osfh;
+#endif
+
+  fno = fileno (fd);
+  if (-1 == fno)
+    return NULL;
+
+#if MINGW
+  osfh = _get_osfhandle (fno);
+  if (INVALID_HANDLE_VALUE == (HANDLE) osfh)
+    return NULL;
+#endif
+
+  fh = GNUNET_malloc (sizeof (struct GNUNET_DISK_FileHandle));
+
+#if MINGW
+  fh->h = (HANDLE) osfh;
+  /* Assume it to be a pipe. TODO: use some kind of detection
+   * function to figure out handle type.
+   * Note that we can't make it overlapped if it isn't already.
+   * (ReOpenFile() is only available in 2003/Vista).
+   * The process that opened this file in the first place (usually a parent
+   * process, if this is stdin/stdout/stderr) must make it overlapped,
+   * otherwise we're screwed, as selecting on non-overlapped handle
+   * will block.
+   */
+  fh->type = GNUNET_DISK_HANLDE_TYPE_PIPE;
+  fh->oOverlapRead = GNUNET_malloc (sizeof (OVERLAPPED));
+  fh->oOverlapWrite = GNUNET_malloc (sizeof (OVERLAPPED));
+  fh->oOverlapRead->hEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
+  fh->oOverlapWrite->hEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
+#else
+  fh->fd = fno;
+#endif
+
+  return fh;
 }
 
 
@@ -1966,7 +2163,8 @@ create_selectable_pipe (PHANDLE read_pipe_ptr, PHANDLE write_pipe_ptr,
   /* Default to error. */
   *read_pipe_ptr = *write_pipe_ptr = INVALID_HANDLE_VALUE;
 
-  HANDLE read_pipe = INVALID_HANDLE_VALUE, write_pipe = INVALID_HANDLE_VALUE;
+  HANDLE read_pipe;
+  HANDLE write_pipe;
 
   /* Ensure that there is enough pipe buffer space for atomic writes.  */
   if (psize < PIPE_BUF)
@@ -2147,8 +2345,8 @@ GNUNET_DISK_pipe (int blocking_read, int blocking_write, int inherit_read, int i
   CloseHandle (p->fd[1]->h);
   p->fd[1]->h = tmp_handle;
 
-  p->fd[0]->type = GNUNET_PIPE;
-  p->fd[1]->type = GNUNET_PIPE;
+  p->fd[0]->type = GNUNET_DISK_HANLDE_TYPE_PIPE;
+  p->fd[1]->type = GNUNET_DISK_HANLDE_TYPE_PIPE;
 
   p->fd[0]->oOverlapRead = GNUNET_malloc (sizeof (OVERLAPPED));
   p->fd[0]->oOverlapWrite = GNUNET_malloc (sizeof (OVERLAPPED));
@@ -2250,17 +2448,17 @@ GNUNET_DISK_pipe_from_fd (int blocking_read, int blocking_write, int fd[2])
   }
 #else
   if (fd[0] >= 0)
-    p->fd[0]->h = _get_osfhandle (fd[0]);
+    p->fd[0]->h = (HANDLE) _get_osfhandle (fd[0]);
   else
     p->fd[0]->h = INVALID_HANDLE_VALUE;
   if (fd[1] >= 0)
-    p->fd[1]->h = _get_osfhandle (fd[1]);
+    p->fd[1]->h = (HANDLE) _get_osfhandle (fd[1]);
   else
     p->fd[1]->h = INVALID_HANDLE_VALUE;
 
   if (p->fd[0]->h != INVALID_HANDLE_VALUE)
   {
-    p->fd[0]->type = GNUNET_PIPE;
+    p->fd[0]->type = GNUNET_DISK_HANLDE_TYPE_PIPE;
     p->fd[0]->oOverlapRead = GNUNET_malloc (sizeof (OVERLAPPED));
     p->fd[0]->oOverlapWrite = GNUNET_malloc (sizeof (OVERLAPPED));
     p->fd[0]->oOverlapRead->hEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
@@ -2269,7 +2467,7 @@ GNUNET_DISK_pipe_from_fd (int blocking_read, int blocking_write, int fd[2])
 
   if (p->fd[1]->h != INVALID_HANDLE_VALUE)
   {
-    p->fd[1]->type = GNUNET_PIPE;
+    p->fd[1]->type = GNUNET_DISK_HANLDE_TYPE_PIPE;
     p->fd[1]->oOverlapRead = GNUNET_malloc (sizeof (OVERLAPPED));
     p->fd[1]->oOverlapWrite = GNUNET_malloc (sizeof (OVERLAPPED));
     p->fd[1]->oOverlapRead->hEvent = CreateEvent (NULL, FALSE, FALSE, NULL);

@@ -1,5 +1,5 @@
 # This file is part of GNUnet.
-# (C) 2001--2012 Christian Grothoff (and other contributing authors)
+# (C) 2001--2013 Christian Grothoff (and other contributing authors)
 #
 # GNUnet is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published
@@ -22,13 +22,13 @@
 #
 AC_PREREQ(2.61)
 # Checks for programs.
-AC_INIT([gnunet], [0.9.3],[bug-gnunet@gnu.org])
+AC_INIT([gnunet], [0.9.5a],[bug-gnunet@gnu.org])
 
 AC_CANONICAL_TARGET
 AC_CANONICAL_HOST
 AC_CANONICAL_SYSTEM
 
-AM_INIT_AUTOMAKE([gnunet], [0.9.3])
+AM_INIT_AUTOMAKE([gnunet], [0.9.5a])
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 AC_CONFIG_HEADERS([gnunet_config.h])
 AH_TOP([#define _GNU_SOURCE  1])
@@ -68,7 +68,10 @@ fi
 # Use Linux interface name unless the OS has a different preference
 DEFAULT_INTERFACE="\"eth0\""
 
-funcstocheck="socket select inet_ntoa getnameinfo gethostname gethostbyname gethostbyaddr getaddrinfo"
+funcstocheck="getnameinfo gethostname gethostbyname gethostbyaddr getaddrinfo"
+
+# Srcdir in a form that native compiler understands (i.e. DOS path on W32)
+native_srcdir=$srcdir
 
 # Check system type
 case "$host_os" in
@@ -84,14 +87,14 @@ case "$host_os" in
      UNIXONLY="#"
      ;;
 linux*)
-     AC_DEFINE_UNQUOTED(LINUX,1,[This is a Linux system])
+     AC_DEFINE_UNQUOTED(LINUX,1,[This is a Linux kernel])
      build_target="linux"
      LIBPREFIX=
      DLLDIR=lib
      UNIXONLY="#"
      AC_PATH_XTRA
      ;;
-freebsd*)
+*freebsd*)
      AC_DEFINE_UNQUOTED(SOMEBSD,1,[This is a BSD system])
      AC_DEFINE_UNQUOTED(FREEBSD,1,[This is a FreeBSD system])
      CFLAGS="-D_THREAD_SAFE $CFLAGS"
@@ -100,7 +103,7 @@ freebsd*)
      DLLDIR=lib
      UNIXONLY="#"
      ;;
-openbsd*)
+*openbsd*)
      AC_DEFINE_UNQUOTED(SOMEBSD,1,[This is a BSD system])
      AC_DEFINE_UNQUOTED(OPENBSD,1,[This is an OpenBSD system])
      LIBS=`echo $LIBS | sed -e "s/-ldl//"`
@@ -109,7 +112,7 @@ openbsd*)
      DLLDIR=lib
      UNIXONLY="#"
      ;;
-netbsd*)
+*netbsd*)
      AC_DEFINE_UNQUOTED(SOMEBSD,1,[This is a BSD system])
      AC_DEFINE_UNQUOTED(NETBSD,1,[This is a NetBSD system])
      LIBPREFIX=
@@ -127,7 +130,7 @@ netbsd*)
      UNIXONLY="#"
      ;;
 *arm-linux*)
-     AC_DEFINE_UNQUOTED(LINUX,1,[This is a Linux system])
+     AC_DEFINE_UNQUOTED(LINUX,1,[This is a Linux kernel])
      CFLAGS="-D_REENTRANT -fPIC -pipe $CFLAGS"
      build_target="linux"
      LIBPREFIX=
@@ -161,6 +164,12 @@ netbsd*)
      DLLDIR=bin
      UNIXONLY=""
      funcstocheck=""
+     native_srcdir=$(cd $srcdir; pwd -W)
+     ;;
+gnu*)
+     AC_DEFINE_UNQUOTED(GNU,1,[This is a GNU system])
+     build_target="gnu"
+     UNIXONLY="#"
      ;;
 *)
      AC_MSG_RESULT(Unrecognised OS $host_os)
@@ -184,6 +193,7 @@ AM_CONDITIONAL(SOLARIS, test "$build_target" = "solaris")
 AM_CONDITIONAL(XFREEBSD, test "$build_target" = "freebsd")
 AM_CONDITIONAL(OPENBSD, test "$build_target" = "openbsd")
 AM_CONDITIONAL(LINUX, test "$build_target" = "linux")
+AM_CONDITIONAL(GNU, test "$build_target" = "gnu")
 
 AC_MSG_RESULT([$build_target])
 AC_SUBST(build_target)
@@ -211,13 +221,25 @@ fi
 
 # libgcrypt
 gcrypt=0
-AM_PATH_LIBGCRYPT(1.2.0, gcrypt=1)
+NEED_LIBGCRYPT_API=1
+NEED_LIBGCRYPT_VERSION=1.4.2
+
+
+AM_PATH_LIBGCRYPT("$NEED_LIBGCRYPT_API:$NEED_LIBGCRYPT_VERSION", gcrypt=1)
 AC_CHECK_DECLS([gcry_mpi_lshift], [], [], [[#include <gcrypt.h>]])
 
 if test $gcrypt = 0
 then
-  AC_MSG_ERROR([GNUnet needs libgcrypt])
+  AC_MSG_ERROR([[
+***
+*** You need libgcrypt to build this program.
+**  This library is for example available at
+***   ftp://ftp.gnupg.org/gcrypt/libgcrypt/
+*** (at least version $NEED_LIBGCRYPT_VERSION (API $NEED_LIBGCRYPT_API) 
+***  is required.)
+***]])
 fi
+AC_DEFINE_UNQUOTED([NEED_LIBGCRYPT_VERSION], "$NEED_LIBGCRYPT_VERSION", [required libgcrypt version])
 
 # Adam shostack suggests the following for Windows:
 # -D_FORTIFY_SOURCE=2 -fstack-protector-all
@@ -249,6 +271,26 @@ AC_ARG_ENABLE([logging],
           [test "x$enableval" = "xveryverbose"], [extra_logging=\(GNUNET_YES+1\)])
    ], [])
 AC_DEFINE_UNQUOTED([GNUNET_EXTRA_LOGGING],[$extra_logging],[1 if extra logging is enabled, 2 for very verbose extra logging, 0 otherwise])
+
+# should memory poisoning be enabled?
+AC_MSG_CHECKING(whether to poison freed memory)
+AC_ARG_ENABLE([poisoning],
+   [AS_HELP_STRING([--enable-poisoning], [enable poisoning of freed memory (good for debugging)])],
+   [enable_poisoning=${enableval}],
+   [
+     if test "x$extra_logging" != "xGNUNET_NO"; then
+       enable_poisoning="defaults to yes (extra logging is enabled)"
+     else
+       enable_poisoning=no
+     fi
+   ])
+AC_MSG_RESULT($enable_poisoning)
+if test ! "x$enable_poisoning" = "xno"; then
+  enable_poisoning=1
+else
+  enable_poisoning=0
+fi
+AC_DEFINE_UNQUOTED([ENABLE_POISONING],[$enable_poisoning],[1 if freed memory should be poisoned, 0 otherwise])
 
 if test $build = $target
 then
@@ -320,7 +362,40 @@ AC_LANG_POP(C)
 fi	# $build = $target
 
 # libcurl
-LIBCURL_CHECK_CONFIG(,7.20.1,,AC_MSG_ERROR([GNUnet requires libcurl >= 7.20.1]))
+LIBCURL_CHECK_CONFIG(,7.21.3,curl=1,curl=0)
+if test "$curl" = 1
+then
+	AM_CONDITIONAL(HAVE_LIBCURL, true)
+	AC_DEFINE([HAVE_LIBCURL],[1],[Have libcurl])
+else
+	AM_CONDITIONAL(HAVE_LIBCURL, false)
+fi
+
+
+# libidn
+AC_MSG_CHECKING([if Libidn can be used])
+AC_ARG_WITH(libidn, AC_HELP_STRING([--with-libidn=[DIR]],
+                                    [Support IDN (needs GNU Libidn)]),
+libidn=$withval, libidn=yes)
+if test "$libidn" != "no"; then
+  if test "$libidn" != "yes"; then
+     LDFLAGS="${LDFLAGS} -L$libidn/lib"
+     CPPFLAGS="${CPPFLAGS} -I$libidn/include"
+  fi
+  AC_CHECK_HEADER(idna.h,
+  AC_CHECK_LIB(idn, stringprep_check_version,
+    [libidn=yes LIBS="${LIBS} -lidn"], libidn=no),
+     libidn=no)
+fi
+if test "$libidn" != "no" ; then
+  AC_DEFINE(LIBIDN, 1, [Define to 1 if you want IDN support.])
+  else
+  AC_MSG_FAILURE([Libidn not found])
+fi
+AC_MSG_RESULT($libidn)
+
+
+
 # restore LIBS
 LIBS=$SAVE_LIBS
 
@@ -337,6 +412,34 @@ else
 	AM_CONDITIONAL(HAVE_LIBGLPK, true)
 	AC_DEFINE([HAVE_LIBGLPK],[1],[Have GLPK])
 fi
+
+# test for glib
+# Minimum required version for glibtop is 2.6.0
+AM_PATH_GLIB_2_0(2.6.0, [glib2=true] , [glib2=false] ,)
+if test x$glib2 = xfalse
+then
+	AM_CONDITIONAL(HAVE_GLIB2, false)
+	AC_MSG_WARN([GNUnet requires GLIB >= 2.6.0])
+else
+	AM_CONDITIONAL(HAVE_GLIB2, true)
+	AC_DEFINE([HAVE_GLIB2],[1],[Have glib2])
+	LIBS="$LIBS $GLIB_LIBS"
+	CFLAGS="$CFLAGS $GLIB_CFLAGS"
+fi
+
+#libgtop
+PKG_CHECK_MODULES(LIBGTOP,libgtop-2.0,  [gtop=true] , [gtop=false] )
+if test x$gtop = xfalse
+then
+	AM_CONDITIONAL(HAVE_LIBGTOP, false)
+	AC_MSG_WARN([GNUnet requires libgtop])
+else
+	AM_CONDITIONAL(HAVE_LIBGTOP, true)
+	AC_DEFINE([HAVE_LIBGTOP],[1],[Have libgtop])
+	LIBS="$LIBS $LIBGTOP_LIBS"
+	CFLAGS="$CFLAGS $LIBGTOP_CFLAGS"
+fi
+
 
 
 
@@ -411,7 +514,7 @@ AC_HEADER_STDC
 AC_CHECK_HEADERS([fcntl.h math.h errno.h ctype.h limits.h stdio.h stdlib.h string.h unistd.h stdarg.h signal.h locale.h sys/stat.h sys/types.h],,AC_MSG_ERROR([Compiling GNUnet requires standard UNIX headers files]))
 
 # Checks for headers that are only required on some systems or opional (and where we do NOT abort if they are not there)
-AC_CHECK_HEADERS([langinfo.h sys/param.h sys/mount.h sys/statvfs.h sys/select.h sockLib.h sys/mman.h sys/msg.h sys/vfs.h arpa/inet.h fcntl.h libintl.h netdb.h netinet/in.h netinet/in_systm.h sys/ioctl.h sys/socket.h sys/time.h unistd.h kstat.h sys/sysinfo.h kvm.h sys/file.h sys/resource.h ifaddrs.h mach/mach.h stddef.h sys/timeb.h terminos.h argz.h ucred.h endian.h sys/endian.h])
+AC_CHECK_HEADERS([malloc.h malloc/malloc.h langinfo.h sys/param.h sys/mount.h sys/statvfs.h sys/select.h sockLib.h sys/mman.h sys/msg.h sys/vfs.h arpa/inet.h fcntl.h libintl.h netdb.h netinet/in.h netinet/in_systm.h sys/ioctl.h sys/socket.h sys/time.h unistd.h kstat.h sys/sysinfo.h kvm.h sys/file.h sys/resource.h ifaddrs.h mach/mach.h stddef.h sys/timeb.h terminos.h argz.h ucred.h endian.h sys/endian.h execinfo.h])
 
 SAVE_LDFLAGS=$LDFLAGS
 SAVE_CPPFLAGS=$CPPFLAGS
@@ -523,10 +626,17 @@ AC_ARG_WITH(mysql,
    fi
   ],
   [AC_MSG_RESULT([--with-mysql not specified])
-   LDFLAGS="-L/usr/lib/mysql $LDFLAGS $ZLIBS"
+   if test -d "/usr/lib64/mysql"; then
+    MYSQL_LIBDIR="/usr/lib64/mysql"
+   elif test -d "/usr/lib/mysql"; then
+    MYSQL_LIBDIR="/usr/lib/mysql"
+   else
+    MYSQL_LIBDIR="/usr/lib"
+   fi
+   LDFLAGS="-L$MYSQL_LIBDIR $LDFLAGS $ZLIBS"
    AC_CHECK_LIB(mysqlclient, mysql_init,
     [AC_CHECK_HEADERS(mysql/mysql.h,
-      MYSQL_LDFLAGS="-L/usr/lib/mysql"
+      MYSQL_LDFLAGS="-L$MYSQL_LIBDIR"
       mysql=true
 
      , [], [$CYGWIN_MYSQL_MAGIC])])
@@ -584,15 +694,15 @@ AC_ARG_WITH(microhttpd,
             AC_CHECK_LIB([microhttpd], [MHD_start_daemon],
               [AC_MSG_CHECKING([for libmicrohttpd >= 0.9.18])
               AC_RUN_IFELSE([
-                #include "$srcdir/src/include/platform.h"
+                #include "$native_srcdir/src/include/platform.h"
                 #include <microhttpd.h>
                 int main () { return MHD_VERSION >= 0x0091200 ? 0 : 1; }
                ], [
                AC_MSG_RESULT(ok)
                lmhd=1],[AC_MSG_RESULT(failed)],lmhd=1)]),
-	    [],[#include "$srcdir/src/include/platform.h"
+	    [],[#include "$native_srcdir/src/include/platform.h"
                 #include <microhttpd.h>]),,
-            [#include "$srcdir/src/include/platform.h"])
+            [#include "$native_srcdir/src/include/platform.h"])
         ;;
       *)
         LDFLAGS="-L$with_microhttpd/lib $LDFLAGS"
@@ -603,15 +713,15 @@ AC_ARG_WITH(microhttpd,
               EXT_LIB_PATH="-L$with_microhttpd/lib $EXT_LIB_PATH"
               [AC_MSG_CHECKING([for libmicrohttpd >= 0.9.18])
                AC_RUN_IFELSE([
-                #include "$srcdir/src/include/platform.h"
+                #include "$native_srcdir/src/include/platform.h"
                 #include <microhttpd.h>
                 int main () { return MHD_VERSION >= 0x0091200 ? 0 : 1; }
                ], [
                AC_MSG_RESULT(ok)
                lmhd=1],[AC_MSG_RESULT(failed)],lmhd=1)]),
-	    [],[#include "$srcdir/src/include/platform.h"
+	    [],[#include "$native_srcdir/src/include/platform.h"
                 #include <microhttpd.h>]),,
-            [#include "$srcdir/src/include/platform.h"])
+            [#include "$native_srcdir/src/include/platform.h"])
         ;;
     esac
    ],
@@ -621,15 +731,15 @@ AC_ARG_WITH(microhttpd,
         AC_CHECK_LIB([microhttpd], [MHD_start_daemon],
           [AC_MSG_CHECKING([for libmicrohttpd >= 0.9.18])
               AC_RUN_IFELSE([
-                #include "$srcdir/src/include/platform.h"
+                #include "$native_srcdir/src/include/platform.h"
 		#include <microhttpd.h>
                 int main () { return MHD_VERSION >= 0x0091200 ? 0 : 1; }
                ], [
                AC_MSG_RESULT(ok)
                lmhd=1],[AC_MSG_RESULT(failed)],lmhd=1)]),
-	[],[#include "$srcdir/src/include/platform.h"
+	[],[#include "$native_srcdir/src/include/platform.h"
             #include <microhttpd.h>]),,
-       [#include "$srcdir/src/include/platform.h"])])
+       [#include "$native_srcdir/src/include/platform.h"])])
 AM_CONDITIONAL(HAVE_MHD, test x$lmhd = x1)
 AC_DEFINE_UNQUOTED([HAVE_MHD], $lmhd, [We have libmicrohttpd])
 
@@ -640,23 +750,6 @@ LIBS=$SAVE_LIBS
 # check for python & pexpect (used for some testcases only)
 AM_PATH_PYTHON([2.6],, [:])
 AM_CONDITIONAL([HAVE_PYTHON], [test "$PYTHON" != :])
-
-if test "$PYTHON" != :
-then
-  AC_MSG_CHECKING([for pexpect])
-  $PYTHON -c "import pexpect" > /dev/null 2> /dev/null
-  PYEX=$?
-  AM_CONDITIONAL(HAVE_PYTHON_PEXPECT, test $PYEX -eq 0)
-  if test $PYEX -eq 0
-  then
-    AC_MSG_RESULT([yes])
-  else
-    AC_MSG_RESULT([not found])
-  fi
-else
-  AM_CONDITIONAL(HAVE_PYTHON_PEXPECT, 0)
-fi
-
 
 # check for gettext
 AM_GNU_GETTEXT([external])
@@ -701,7 +794,7 @@ AC_FUNC_VPRINTF
 AC_HEADER_SYS_WAIT
 AC_TYPE_OFF_T
 AC_TYPE_UID_T
-AC_CHECK_FUNCS([floor memmove rmdir strncasecmp strrchr strtol atoll dup2 fdatasync ftruncate gettimeofday memset mkdir mkfifo strcasecmp strchr strdup strerror strstr clock_gettime getrusage rand uname setlocale getcwd mktime gmtime_r gmtime strlcpy strlcat ftruncate stat64 sbrk mmap mremap setrlimit sysconf initgroups getifaddrs freeifaddrs localtime_r nl_langinfo putenv realpath strndup gethostbyname2 gethostbyname getpeerucred getpeereid setresuid $funcstocheck])
+AC_CHECK_FUNCS([atoll stat64 strnlen mremap getrlimit setrlimit sysconf initgroups strndup gethostbyname2 getpeerucred getpeereid setresuid $funcstocheck getifaddrs freeifaddrs getresgid mallinfo malloc_size malloc_usable_size getrusage])
 
 # restore LIBS
 LIBS=$SAVE_LIBS
@@ -780,6 +873,42 @@ AC_ARG_WITH(sudo,
 AC_SUBST(SUDO_BINARY)
 AM_CONDITIONAL([HAVE_SUDO], [test "x$SUDO_BINARY" != "x" -o -w /])
 
+
+# test for nssdir
+AC_MSG_CHECKING(with nssdir)
+AC_ARG_WITH(nssdir,
+  [  --with-nssdir=PATH       where to install NSS plugins],
+  [AC_MSG_RESULT("$with_nssdir")
+   case $with_nssdir in
+   no)
+     NSS_DIR=
+     install_nss=0
+     ;;
+   yes)
+     NSS_DIR="/lib"
+     install_nss=1
+     ;;
+   *)
+     NSS_DIR=$with_nssdir
+     install_nss=1
+    ;;
+   esac
+  ],
+  [
+   if test "x$SUDO_BINARY" != "x" -o -w /
+   then
+     NSS_DIR="/lib"
+     install_nss=1
+     AC_MSG_RESULT([yes, to /lib])
+   else
+     NSS_DIR=
+     install_nss=0
+     AC_MSG_RESULT([no])
+   fi
+  ])
+AC_SUBST(NSS_DIR)
+AM_CONDITIONAL([INSTALL_NSS], [test "x$install_nss" != "x0"])
+
 # test for gnunetdns group name
 GNUNETDNS_GROUP=gnunetdns
 AC_MSG_CHECKING(for gnunetdns group name)
@@ -801,6 +930,71 @@ AC_ARG_WITH(gnunetdns,
   [AC_MSG_RESULT([gnunetdns])])
 AC_SUBST(GNUNETDNS_GROUP)
 
+
+
+# gnutls
+gnutls=0
+AC_MSG_CHECKING(for gnutls)
+AC_ARG_WITH(gnutls,
+   [  --with-gnutls=PFX   base of gnutls installation],
+   [AC_MSG_RESULT([$with_gnutls])
+    case $with_gnutls in
+      no)
+        ;;
+      yes)
+        AC_CHECK_HEADERS([gnutls/abstract.h],
+            AC_CHECK_LIB([gnutls], [gnutls_priority_set],
+	     gnutls=true))
+        ;;
+      *)
+        LDFLAGS="-L$with_gnutls/lib $LDFLAGS"
+        CPPFLAGS="-I$with_gnutls/include $CPPFLAGS"
+        AC_CHECK_HEADERS([gnutls/abstract.h],
+            AC_CHECK_LIB([gnutls], [gnutls_priority_set],
+              EXT_LIB_PATH="-L$with_gnutls/lib $EXT_LIB_PATH"
+              gnutls=true))
+        ;;
+    esac
+   ],
+   [AC_MSG_RESULT([--with-gnutls not specified])
+    AC_CHECK_HEADERS([gnutls/abstract.h],
+        AC_CHECK_LIB([gnutls], [gnutls_priority_set],
+          gnutls=true))])
+AM_CONDITIONAL(HAVE_GNUTLS, test x$gnutls = xtrue)
+AC_DEFINE_UNQUOTED([HAVE_GNUTLS], $gnutls, [We have gnutls])
+
+
+# Test if we are building for superMUC
+llapi=0
+AC_MSG_CHECKING(if testbed should use IBM LoadLeveler to run on SuperMUC)
+AC_ARG_WITH([ll],
+    [AS_HELP_STRING([--with-ll=PFX],
+       [use IBM LoadLeveler (installed at PFX) for running testbed on SuperMUC]. Default is no)],
+    [AC_MSG_RESULT([$with_ll])
+     case $with_ll in
+       no)
+         ;;
+       yes)
+         AC_CHECK_HEADERS([llapi.h],
+     	    AC_CHECK_LIB([llapi], [llsubmit],
+     	        llapi=true,
+		AC_MSG_ERROR(libllapi not found but --with-llapi given)),
+	    AC_MSG_ERROR(llapi.h not found but --with-llapi given))
+     	;;
+       *)
+         LDFLAGS="-L$with_ll/lib $LDFLAGS"
+         CPPFLAGS="-I$with_ll/include $CPPFLAGS"
+	 AC_CHECK_HEADERS([llapi.h],
+     	    AC_CHECK_LIB([llapi], [llsubmit],
+     	        llapi=true,
+		AC_MSG_ERROR(libllapi not found but --with-llapi given)),
+	    AC_MSG_ERROR(llapi.h not found but --with-llapi given))
+        ;;
+     esac
+    ],
+    [AC_MSG_RESULT(--with-ll not specified)])
+AM_CONDITIONAL([WITH_LL], [test "x$llapi" = "xtrue"])
+AC_DEFINE_UNQUOTED(WITH_LL, $llapi, [Do we have to use IBM LoadLeveler])
 
 # should 'make check' run tests?
 AC_MSG_CHECKING(whether to run tests)
@@ -870,6 +1064,15 @@ AC_ARG_ENABLE([experimental],
    [enable_experimental=no])
 AC_MSG_RESULT($enable_experimental)
 AM_CONDITIONAL([HAVE_EXPERIMENTAL], [test "x$enable_experimental" = "xyes"])
+
+# should memory statistics be kept (very expensive CPU-wise!)
+AC_MSG_CHECKING(whether to create expensive statistics on memory use)
+AC_ARG_ENABLE([heapstats],
+   [AS_HELP_STRING([--enable-heapstats], [enable expensive heap statistics])],
+   [enable_heapstats=1],
+   [enable_heapstats=0])
+AC_MSG_RESULT($enable_heapstats)
+AC_DEFINE_UNQUOTED([ENABLE_HEAP_STATISTICS],$enable_heapstats,[enable expensive heap statistics])
 
 # should code be enabled that works around missing OS functionality on Windows?
 # used for test cases
@@ -993,6 +1196,27 @@ AC_MSG_RESULT($use_gcov)
 AM_CONDITIONAL([USE_COVERAGE], [test "x$use_gcov" = "xyes"])
 
 
+# version info
+AC_PATH_PROG(svnversioncommand, svnversion)
+AC_PATH_PROG(gitcommand, git)
+if test "X$svnversioncommand" = "X" || test `$svnversioncommand -n '.'` = "exported"
+then
+  if test "X$gitcommand" = "X"
+  then
+    AC_DEFINE_UNQUOTED(VCS_VERSION, ["release"], [repository svn version])
+  else
+    gitver=$(git log -1 | grep "git-svn-id" | sed -e 's/.*@\([[0-9]]\+\) .*/\1/')
+    if "X$gitver" = "X"
+    then
+      AC_DEFINE_UNQUOTED(VCS_VERSION, ["release"], [repository svn version])
+    else
+      AC_DEFINE_UNQUOTED(VCS_VERSION, ["svn-$gitver"], [repository svn version])
+    fi
+  fi
+else
+  AC_DEFINE_UNQUOTED(VCS_VERSION, ["svn-`svnversion -n`"], [repository svn version])
+fi
+
 AC_CONFIG_FILES([ 
 Makefile
 contrib/Makefile
@@ -1005,11 +1229,14 @@ src/arm/Makefile
 src/arm/arm.conf
 src/ats/Makefile
 src/ats/ats.conf
+src/ats-tool/Makefile
 src/block/Makefile
 src/chat/Makefile
 src/chat/chat.conf
 src/core/Makefile
 src/core/core.conf
+src/consensus/Makefile
+src/consensus/consensus.conf
 src/datacache/Makefile
 src/datastore/Makefile
 src/datastore/datastore.conf
@@ -1049,8 +1276,11 @@ src/regex/Makefile
 src/statistics/Makefile
 src/statistics/statistics.conf
 src/stream/Makefile
+src/sysmon/Makefile
+src/sysmon/sysmon.conf
 src/template/Makefile
 src/testbed/Makefile
+src/testbed/testbed.conf
 src/testing/Makefile
 src/topology/Makefile
 src/transport/Makefile
@@ -1062,25 +1292,37 @@ src/vpn/Makefile
 src/vpn/vpn.conf
 src/integration-tests/Makefile
 pkgconfig/Makefile
+pkgconfig/gnunetats.pc
 pkgconfig/gnunetarm.pc
 pkgconfig/gnunetblock.pc
 pkgconfig/gnunetcore.pc
 pkgconfig/gnunetdatacache.pc
 pkgconfig/gnunetdatastore.pc
 pkgconfig/gnunetdht.pc
-pkgconfig/gnunetdhtlog.pc
+pkgconfig/gnunetdns.pc
+pkgconfig/gnunetdnsparser.pc
 pkgconfig/gnunetdv.pc
 pkgconfig/gnunetfragmentation.pc
 pkgconfig/gnunetfs.pc
+pkgconfig/gnunetgns.pc
 pkgconfig/gnunethello.pc
+pkgconfig/gnunetlockmanager.pc
+pkgconfig/gnunetmesh.pc
+pkgconfig/gnunetmysql.pc
+pkgconfig/gnunetnamestore.pc
 pkgconfig/gnunetnat.pc
 pkgconfig/gnunetnse.pc
 pkgconfig/gnunetpeerinfo.pc
+pkgconfig/gnunetpostgres.pc
 pkgconfig/gnunetregex.pc
 pkgconfig/gnunetstatistics.pc
+pkgconfig/gnunetstream.pc
+pkgconfig/gnunettestbed.pc
 pkgconfig/gnunettesting.pc
 pkgconfig/gnunettransport.pc
+pkgconfig/gnunettun.pc
 pkgconfig/gnunetutil.pc
+pkgconfig/gnunetvpn.pc
 ])
 AC_OUTPUT
 
@@ -1096,6 +1338,18 @@ fi
 if test "x$sqlite" = "x0"
 then
   AC_MSG_NOTICE([NOTICE: sqlite not found.  sqLite support will not be compiled.])
+fi
+
+# libcurl
+if test "x$curl" = "x0"
+then
+  AC_MSG_NOTICE([NOTICE: libcurl not found.  http client support will not be compiled.])
+fi
+
+#gnutls
+if test x$gnutls != xtrue
+then
+  AC_MSG_NOTICE([NOTICE: gnutls not found, gnunet-gns-proxy will not be built])
 fi
 
 # java ports
@@ -1121,30 +1375,40 @@ then
   AC_MSG_NOTICE([NOTICE: --with-sudo not specified and not running as 'root', will not install GNS NSS library])
 fi
 
+
 AC_MSG_NOTICE([********************************************
-You can compile GNUnet with
-	make
-now. After that, run (if necessary as 'root')
+Please make sure NOW that you have created a user and group 'gnunet'
+and additionally a group 'gnunetdns':
+        addgroup gnunetdns
+        adduser gnunet
+
+Make sure that '/var/lib/gnunet' is owned (and writable) by user
+'gnunet'.  Then, you can compile GNUnet with
+        make
+
+After that, run (if necessary as 'root')
         make install
-to install everything. You may want to create a new user account
-to run the GNUnet service:
-	adduser gnunet
-You also need to create an configuration file that should
-specify the path where GNUnet should store data.  For example,
-you could store in "/etc/gnunet.conf" the following lines:
+to install everything. 
 
-[[PATHS]]
-SERVICEHOME = /var/lib/gnunet
-DEFAULTCONFIG = /etc/gnunet.conf
-
-Now, in order to start your peer, run as the 'gnunet' user
-	gnunet-arm -s
-
-Each GNUnet user should also create an (at least initially) empty
-configuration file:
-	mkdir $HOME/.gnunet/
-	touch $HOME/.gnunet/gnunet.conf
+Each GNUnet user should be added to the 'gnunet' group (may
+require fresh login to come into effect):
+        adduser $USERNAME gnunet
+(run the above command as root once for each of your users, replacing
+"$USERNAME" with the respective login names).  If you have a global IP
+address, no further configuration is required.
 	
-Optionally, download and compile:
-- gnunet-gtk to get a GUI for file-sharing and configuration.
+Optionally, download and compile gnunet-gtk to get a GUI for 
+file-sharing and configuration.  This is particularly recommended
+if your network setup is non-trivial, as gnunet-setup can be
+used to test in the GUI if your network configuration is working.
+gnunet-setup should be run as the "gnunet" user under X.  As it
+does very little with the network, running it as "root" is likely
+also harmless.  You can also run it as a normal user, but then
+you have to copy ~/.gnunet/gnunet.conf" over to the "gnunet" user's
+home directory in the end.
+
+Once you have configured your peer, run (as the 'gnunet' user)
+	gnunet-arm -s
+to start the peer.  You can then run the various GNUnet-tools as
+your "normal" user (who should only be in the group 'gnunet').
 ********************************************])

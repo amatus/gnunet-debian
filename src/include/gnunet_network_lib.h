@@ -67,10 +67,31 @@ struct GNUNET_NETWORK_FDSet
 
 };
 
-
-
+#include "platform.h"
 #include "gnunet_disk_lib.h"
 #include "gnunet_time_lib.h"
+
+/**
+ * Test if the given protocol family is supported by this system.
+ *
+ * @param pf protocol family to test (PF_INET, PF_INET6, PF_UNIX)
+ * @return GNUNET_OK if the PF is supported
+ */
+int
+GNUNET_NETWORK_test_pf (int pf);
+
+
+/**
+ * Given a unixpath that is too long (larger than UNIX_PATH_MAX),
+ * shorten it to an acceptable length while keeping it unique
+ * and making sure it remains a valid filename (if possible).
+ *
+ * @param unixpath long path, will be freed (or same pointer returned
+ *        with moved 0-termination).
+ * @return shortened unixpath, NULL on error
+ */
+char *
+GNUNET_NETWORK_shorten_unixpath (char *unixpath);
 
 
 /**
@@ -97,6 +118,18 @@ GNUNET_NETWORK_socket_accept (const struct GNUNET_NETWORK_Handle *desc,
  */
 struct GNUNET_NETWORK_Handle *
 GNUNET_NETWORK_socket_box_native (SOCKTYPE fd);
+
+
+/**
+ * Set if a socket should use blocking or non-blocking IO.
+ *
+ * @param fd socket
+ * @param doBlock blocking mode
+ * @return GNUNET_OK on success, GNUNET_SYSERR on error
+ */
+int
+GNUNET_NETWORK_socket_set_blocking (struct GNUNET_NETWORK_Handle *fd, 
+				    int doBlock);
 
 
 /**
@@ -185,7 +218,7 @@ GNUNET_NETWORK_socket_recvfrom_amount (const struct GNUNET_NETWORK_Handle
 ssize_t
 GNUNET_NETWORK_socket_recvfrom (const struct GNUNET_NETWORK_Handle *desc,
                                 void *buffer, size_t length,
-                                struct sockaddr *src_addr, socklen_t * addrlen);
+                                struct sockaddr *src_addr, socklen_t *addrlen);
 
 
 /**

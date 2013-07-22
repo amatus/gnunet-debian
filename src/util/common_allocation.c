@@ -23,9 +23,14 @@
  * @brief wrapper around malloc/free
  * @author Christian Grothoff
  */
-
 #include "platform.h"
 #include "gnunet_common.h"
+#if HAVE_MALLOC_H
+#include <malloc.h>
+#endif
+#if HAVE_MALLOC_MALLOC_H
+#include <malloc/malloc.h>
+#endif
 
 #define LOG(kind,...) GNUNET_log_from (kind, "util",__VA_ARGS__)
 
@@ -182,6 +187,22 @@ GNUNET_xrealloc_ (void *ptr, size_t n, const char *filename, int linenumber)
 }
 
 
+# if __BYTE_ORDER == __LITTLE_ENDIAN
+#define BAADFOOD_STR "\x0D\xF0\xAD\xBA"
+#endif
+# if __BYTE_ORDER == __BIG_ENDIAN
+#define BAADFOOD_STR "\xBA\xAD\xF0\x0D"
+#endif
+
+#if WINDOWS
+#define M_SIZE(p) _msize (p)
+#endif
+#if HAVE_MALLOC_USABLE_SIZE
+#define M_SIZE(p) malloc_usable_size (p)
+#elif HAVE_MALLOC_SIZE
+#define M_SIZE(p) malloc_size (p)
+#endif
+
 /**
  * Free memory. Merely a wrapper for the case that we
  * want to keep track of allocations.
@@ -197,6 +218,20 @@ GNUNET_xfree_ (void *ptr, const char *filename, int linenumber)
 #ifdef W32_MEM_LIMIT
   ptr = &((size_t *) ptr)[-1];
   mem_used -= *((size_t *) ptr);
+#endif
+#if defined(M_SIZE)
+#if ENABLE_POISONING
+  {
+    const uint64_t baadfood = GNUNET_ntohll (0xBAADF00DBAADF00DLL);
+    uint64_t *base = ptr;
+    size_t s = M_SIZE (ptr);  
+    size_t i;
+    
+    for (i=0;i<s/8;i++)
+      base[i] = baadfood;
+    memcpy (&base[s/8], &baadfood, s % 8);
+  }
+#endif
 #endif
   free (ptr);
 }
@@ -221,6 +256,21 @@ GNUNET_xstrdup_ (const char *str, const char *filename, int linenumber)
 }
 
 
+#if ! HAVE_STRNLEN
+static size_t
+strnlen (const char *s, 
+	 size_t n)
+{
+  const char *e;
+
+  e = memchr (s, '\0', n);
+  if (NULL == e)
+    return n;
+  return e - s;
+}
+#endif
+
+
 /**
  * Dup partially a string (same semantics as strndup).
  *
@@ -236,11 +286,13 @@ GNUNET_xstrndup_ (const char *str, size_t len, const char *filename,
 {
   char *res;
 
+  if (0 == len)
+    return GNUNET_strdup ("");
   GNUNET_assert_at (str != NULL, filename, linenumber);
-  len = GNUNET_MIN (len, strlen (str));
+  len = strnlen (str, len);
   res = GNUNET_xmalloc_ (len + 1, filename, linenumber);
   memcpy (res, str, len);
-  res[len] = '\0';
+  /* res[len] = '\0'; 'malloc' zeros out anyway */
   return res;
 }
 

@@ -205,7 +205,7 @@ struct GNUNET_FS_Uri
       /**
        * Hash of the public key for the namespace.
        */
-      GNUNET_HashCode namespace;
+      struct GNUNET_HashCode ns;
 
       /**
        * Human-readable identifier chosen for this
@@ -333,7 +333,7 @@ struct GNUNET_FS_FileInformation
        * over the entire file (when the indexing process is started).
        * Otherwise this field is not used.
        */
-      GNUNET_HashCode file_id;
+      struct GNUNET_HashCode file_id;
 
       /**
        * Size of the file (in bytes).
@@ -568,7 +568,7 @@ struct GNUNET_FS_SearchResult
   /**
    * Key for the search result
    */
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
 
   /**
    * ID of the task that will clean up the probe_ctx should it not
@@ -576,6 +576,12 @@ struct GNUNET_FS_SearchResult
    * up the search result before then).
    */
   GNUNET_SCHEDULER_TaskIdentifier probe_cancel_task;
+
+  /**
+   * Task we use to report periodically to the application that the
+   * probe is still running.
+   */
+  GNUNET_SCHEDULER_TaskIdentifier probe_ping_task;
 
   /**
    * When did the current probe become active?
@@ -633,10 +639,11 @@ GNUNET_FS_queue_ (struct GNUNET_FS_Handle *h, GNUNET_FS_QueueStart start,
 
 /**
  * Dequeue a job from the queue.
- * @param qh handle for the job
+ *
+ * @param qe handle for the job
  */
 void
-GNUNET_FS_dequeue_ (struct GNUNET_FS_QueueEntry *qh);
+GNUNET_FS_dequeue_ (struct GNUNET_FS_QueueEntry *qe);
 
 
 /**
@@ -730,7 +737,7 @@ GNUNET_FS_publish_main_ (void *cls,
  * @param file_id computed hash, NULL on error
  */
 void
-GNUNET_FS_unindex_process_hash_ (void *cls, const GNUNET_HashCode * file_id);
+GNUNET_FS_unindex_process_hash_ (void *cls, const struct GNUNET_HashCode * file_id);
 
 
 /**
@@ -1159,7 +1166,7 @@ struct GNUNET_FS_PublishContext
   /**
    * Namespace that we are publishing in, NULL if we have no namespace.
    */
-  struct GNUNET_FS_Namespace *namespace;
+  struct GNUNET_FS_Namespace *ns;
 
   /**
    * ID of the content in the namespace, NULL if we have no namespace.
@@ -1384,12 +1391,12 @@ struct GNUNET_FS_UnindexContext
   /**
    * Current key for decrypting KBLocks from 'get_key' operation.
    */
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
 
   /**
    * Current query of 'get_key' operation.
    */
-  GNUNET_HashCode query;
+  struct GNUNET_HashCode query;
 
   /**
    * First content UID, 0 for none.
@@ -1424,7 +1431,7 @@ struct GNUNET_FS_UnindexContext
   /**
    * Hash of the file's contents (once computed).
    */
-  GNUNET_HashCode file_id;
+  struct GNUNET_HashCode file_id;
 
   /**
    * Current operatinonal phase.
@@ -1444,12 +1451,12 @@ struct SearchRequestEntry
    * Hash of the original keyword, also known as the
    * key (for decrypting the KBlock).
    */
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
 
   /**
    * Hash of the public key, also known as the query.
    */
-  GNUNET_HashCode query;
+  struct GNUNET_HashCode query;
 
   /**
    * Map that contains a "struct GNUNET_FS_SearchResult" for each result that
@@ -1534,6 +1541,11 @@ struct GNUNET_FS_SearchContext
    * When did we start?
    */
   struct GNUNET_TIME_Absolute start_time;
+
+  /**
+   * How long to wait before we try to reconnect to FS service?
+   */
+  struct GNUNET_TIME_Relative reconnect_backoff;
 
   /**
    * ID of a task that is using this struct and that must be cancelled
@@ -1898,6 +1910,11 @@ struct GNUNET_FS_DownloadContext
    * Time download was started.
    */
   struct GNUNET_TIME_Absolute start_time;
+
+  /**
+   * How long to wait before we try to reconnect to FS service?
+   */
+  struct GNUNET_TIME_Relative reconnect_backoff;
 
   /**
    * Desired level of anonymity.

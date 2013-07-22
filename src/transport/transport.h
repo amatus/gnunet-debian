@@ -47,6 +47,12 @@
 #define MIN_QUOTA_REFRESH_TIME 2000
 
 /**
+ * What's the maximum number of sockets transport uses for validation and
+ * neighbors
+ */
+#define DEFAULT_MAX_FDS 256
+
+/**
  * Maximum frequency for re-evaluating latencies for all transport addresses.
  */
 #define LATENCY_EVALUATION_MAX_DELAY GNUNET_TIME_relative_multiply (GNUNET_TIME_UNIT_HOURS, 1)
@@ -55,6 +61,26 @@
  * Maximum frequency for re-evaluating latencies for connected addresses.
  */
 #define CONNECTED_LATENCY_EVALUATION_MAX_DELAY GNUNET_TIME_relative_multiply (GNUNET_TIME_UNIT_MINUTES, 1)
+
+/**
+ * Similiar to GNUNET_TRANSPORT_NotifyDisconnect but in and out quotas are
+ * included here. These values are not required outside transport_api
+ *
+ * @param cls closure
+ * @param peer the peer that connected
+ * @param ats performance data
+ * @param ats_count number of entries in ats (excluding 0-termination)
+ * @param bandwidth_in inbound bandwidth in NBO
+ * @param bandwidth_out outbound bandwidth in NBO
+ *
+ */
+
+typedef void (*NotifyConnect) (void *cls,
+                              const struct GNUNET_PeerIdentity *peer,
+                              const struct GNUNET_ATS_Information *ats,
+                              uint32_t ats_count,
+                              struct GNUNET_BANDWIDTH_Value32NBO bandwidth_in,
+                              struct GNUNET_BANDWIDTH_Value32NBO bandwidth_out);
 
 GNUNET_NETWORK_STRUCT_BEGIN
 
@@ -109,6 +135,16 @@ struct ConnectInfoMessage
    * Identity of the new neighbour.
    */
   struct GNUNET_PeerIdentity id;
+
+  /**
+   * Current inbound quota for this peer
+   */
+  struct GNUNET_BANDWIDTH_Value32NBO quota_in;
+
+  /**
+   * Current outbound quota for this peer
+   */
+  struct GNUNET_BANDWIDTH_Value32NBO quota_out;
 };
 
 
@@ -231,6 +267,18 @@ struct SendOkMessage
    * send us another message for the given peer.
    */
   uint32_t success GNUNET_PACKED;
+
+
+  /**
+   * Size of message sent
+   */
+  uint32_t bytes_msg GNUNET_PACKED;
+
+  /**
+   * Size of message sent over wire
+   * Includes plugin and protocol specific overhead
+   */
+  uint32_t bytes_physical GNUNET_PACKED;
 
   /**
    * Latency estimate.
@@ -363,6 +411,34 @@ struct AddressIterateMessage
    */
   struct GNUNET_PeerIdentity peer;
 
+};
+
+
+/**
+ * Message from the library to the transport service
+ * asking for binary addresses known for a peer.
+ */
+struct TrafficMetricMessage
+{
+  /**
+   * Type will be GNUNET_MESSAGE_TYPE_TRANSPORT_TRAFFIC_METRIC
+   */
+  struct GNUNET_MessageHeader header;
+
+  /**
+   * SEND, RECEIVE or BOTH?
+   */
+  uint16_t direction;
+
+  /**
+   * Traffic metrics count
+   */
+  uint16_t ats_count;
+
+  /**
+   * The identity of the peer to look up.
+   */
+  struct GNUNET_PeerIdentity peer;
 };
 
 

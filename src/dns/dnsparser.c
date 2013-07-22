@@ -25,47 +25,80 @@
  * @author Christian Grothoff
  */
 #include "platform.h"
+#include <idna.h>
+#if WINDOWS
+#include <idn-free.h>
+#endif
 #include "gnunet_util_lib.h"
 #include "gnunet_dnsparser_lib.h"
+#include "dnsparser.h"
 
 
-// DNS-Stuff
-GNUNET_NETWORK_STRUCT_BEGIN
-/* FIXME: replace this one with the one from tcpip_tun.h! */
-struct GNUNET_TUN_DnsHeader
+/**
+ * Check if a label in UTF-8 format can be coded into valid IDNA.
+ * This can fail if the ASCII-conversion becomes longer than 63 characters.
+ *
+ * @param label label to check (UTF-8 string)
+ * @return GNUNET_OK if the label can be converted to IDNA,
+ *         GNUNET_SYSERR if the label is not valid for DNS names
+ */
+int
+GNUNET_DNSPARSER_check_label (const char *label)
 {
-  uint16_t id GNUNET_PACKED;
-  struct GNUNET_DNSPARSER_Flags flags; 
-  uint16_t query_count GNUNET_PACKED;       // number of questions
-  uint16_t answer_rcount GNUNET_PACKED;       // number of answers
-  uint16_t authority_rcount GNUNET_PACKED;       // number of authority-records
-  uint16_t additional_rcount GNUNET_PACKED;       // number of additional records
-};
+  char *output;
+  size_t slen;
+  
+  if (NULL != strchr (label, '.'))
+    return GNUNET_SYSERR; /* not a label! Did you mean GNUNET_DNSPARSER_check_name? */
+  if (IDNA_SUCCESS != 
+      idna_to_ascii_8z (label, &output, IDNA_USE_STD3_ASCII_RULES))
+    return GNUNET_SYSERR;
+  slen = strlen (output);
+#if WINDOWS
+  idn_free (output);
+#else
+  free (output);
+#endif
+  return (slen > 63) ? GNUNET_SYSERR : GNUNET_OK;
+}
 
-struct query_line
+
+/**
+ * Check if a label in UTF-8 format can be coded into valid IDNA.
+ * This can fail if the ASCII-conversion becomes longer than 253 characters.
+ *
+ * @param name name to check (UTF-8 string)
+ * @return GNUNET_OK if the label can be converted to IDNA,
+ *         GNUNET_SYSERR if the label is not valid for DNS names
+ */
+int
+GNUNET_DNSPARSER_check_name (const char *name)
 {
-  uint16_t type GNUNET_PACKED;
-  uint16_t class GNUNET_PACKED;
-};
-
-struct record_line
-{
-  uint16_t type GNUNET_PACKED;
-  uint16_t class GNUNET_PACKED;
-  uint32_t ttl GNUNET_PACKED;
-  uint16_t data_len GNUNET_PACKED;
-};
-
-struct soa_data
-{
-  uint32_t serial GNUNET_PACKED;
-  uint32_t refresh GNUNET_PACKED;
-  uint32_t retry GNUNET_PACKED;
-  uint32_t expire GNUNET_PACKED;
-  uint32_t minimum GNUNET_PACKED;
-};
-
-GNUNET_NETWORK_STRUCT_END
+  char *ldup;
+  char *output;
+  size_t slen;
+  char *tok;
+  
+  ldup = GNUNET_strdup (name);
+  for (tok = strtok (ldup, "."); NULL != tok; tok = strtok (NULL, "."))
+    if (GNUNET_OK !=
+	GNUNET_DNSPARSER_check_label (tok))
+    {
+      GNUNET_free (ldup);
+      return GNUNET_SYSERR;
+    }
+  GNUNET_free (ldup);
+  if (IDNA_SUCCESS != 
+      idna_to_ascii_8z (name, &output, IDNA_USE_STD3_ASCII_RULES))
+    return GNUNET_SYSERR;
+  slen = strlen (output);
+#if WINDOWS
+  idn_free (output);
+#else
+  free (output);
+#endif
+  return (slen > 253) ? GNUNET_SYSERR : GNUNET_OK;
+}
 
 
 /**
@@ -90,6 +123,8 @@ parse_name (const char *udp_payload,
   char *xstr;
   uint8_t len;
   size_t xoff;
+  char *utf8;
+  Idna_rc rc;
   
   ret = GNUNET_strdup ("");
   while (1)
@@ -107,10 +142,36 @@ parse_name (const char *udp_payload,
       if (*off + 1 + len > udp_payload_length)
 	goto error;
       GNUNET_asprintf (&tmp,
-		       "%s%.*s.",
-		       ret,
+		       "%.*s",
 		       (int) len,
 		       &udp_payload[*off + 1]);
+      if (IDNA_SUCCESS !=
+	  (rc = idna_to_unicode_8z8z (tmp, &utf8, IDNA_USE_STD3_ASCII_RULES)))
+      {
+	GNUNET_log (GNUNET_ERROR_TYPE_INFO,
+		    _("Failed to convert DNS IDNA name `%s' to UTF-8: %s\n"),
+		    tmp,
+		    idna_strerror (rc));
+	GNUNET_free (tmp);
+	GNUNET_asprintf (&tmp,
+			 "%s%.*s.",
+			 ret,
+			 (int) len,
+			 &udp_payload[*off + 1]);
+      }
+      else
+      {
+	GNUNET_free (tmp);
+	GNUNET_asprintf (&tmp,
+			 "%s%s.",
+			 ret,
+			 utf8);
+#if WINDOWS
+	idn_free (utf8);
+#else
+	free (utf8);
+#endif
+      }
       GNUNET_free (ret);
       ret = tmp;
       *off += 1 + len;
@@ -214,6 +275,9 @@ parse_record (const char *udp_payload,
   struct soa_data soa;
   uint16_t mxpref;
   uint16_t data_len;
+  struct srv_data srv;
+  char *ndup;
+  char *tok;
 
   name = parse_name (udp_payload, 
 		     udp_payload_length,
@@ -279,6 +343,50 @@ parse_record (const char *udp_payload,
     r->data.mx->mxhost = parse_name (udp_payload,
 				     udp_payload_length,
 				     off, 0);
+    if (old_off + data_len != *off) 
+      return GNUNET_SYSERR;
+    return GNUNET_OK;
+  case GNUNET_DNSPARSER_TYPE_SRV:
+    if ('_' != *r->name)
+      return GNUNET_SYSERR; /* all valid srv names must start with "_" */
+    if (NULL == strstr (r->name, "._"))
+      return GNUNET_SYSERR; /* necessary string from "._$PROTO" not present */
+    old_off = *off;
+    if (*off + sizeof (struct srv_data) > udp_payload_length)
+      return GNUNET_SYSERR;
+    memcpy (&srv, &udp_payload[*off], sizeof (struct srv_data));    
+    (*off) += sizeof (struct srv_data);
+    r->data.srv = GNUNET_malloc (sizeof (struct GNUNET_DNSPARSER_SrvRecord));
+    r->data.srv->priority = ntohs (srv.prio);
+    r->data.srv->weight = ntohs (srv.weight);
+    r->data.srv->port = ntohs (srv.port);
+    /* parse 'data.hostname' into components, which are
+       "_$SERVICE._$PROTO.$DOMAIN_NAME" */
+    ndup = GNUNET_strdup (r->name);
+    tok = strtok (ndup, ".");
+    GNUNET_assert (NULL != tok);
+    GNUNET_assert ('_' == *tok);
+    r->data.srv->service = GNUNET_strdup (&tok[1]);
+    tok = strtok (NULL, ".");
+    if ( (NULL == tok) || ('_' != *tok) )
+    {
+      GNUNET_free (r->data.srv);
+      GNUNET_free (ndup);
+      return GNUNET_SYSERR;
+    }
+    r->data.srv->proto = GNUNET_strdup (&tok[1]);
+    tok = strtok (NULL, ".");
+    if (NULL == tok)
+    {
+      GNUNET_free (r->data.srv);
+      GNUNET_free (ndup);
+      return GNUNET_SYSERR;
+    }
+    r->data.srv->domain_name = GNUNET_strdup (tok);
+    GNUNET_free (ndup);
+    r->data.srv->target = parse_name (udp_payload,
+				      udp_payload_length,
+				      off, 0);
     if (old_off + data_len != *off) 
       return GNUNET_SYSERR;
     return GNUNET_OK;
@@ -394,6 +502,24 @@ free_soa (struct GNUNET_DNSPARSER_SoaRecord *soa)
 
 
 /**
+ * Free SRV information record.
+ *
+ * @param srv record to free
+ */
+static void
+free_srv (struct GNUNET_DNSPARSER_SrvRecord *srv)
+{
+  if (NULL == srv)
+    return;
+  GNUNET_free_non_null (srv->target);
+  GNUNET_free_non_null (srv->domain_name);
+  GNUNET_free_non_null (srv->proto);
+  GNUNET_free_non_null (srv->service);
+  GNUNET_free (srv);      
+}
+
+
+/**
  * Free MX information record.
  *
  * @param mx record to free
@@ -419,6 +545,9 @@ free_record (struct GNUNET_DNSPARSER_Record *r)
     break;
   case GNUNET_DNSPARSER_TYPE_SOA:
     free_soa (r->data.soa);
+    break;
+  case GNUNET_DNSPARSER_TYPE_SRV:
+    free_srv (r->data.srv);
     break;
   case GNUNET_DNSPARSER_TYPE_NS:
   case GNUNET_DNSPARSER_TYPE_CNAME:
@@ -480,34 +609,60 @@ add_name (char *dst,
 	  const char *name)
 {
   const char *dot;
+  const char *idna_name;
+  char *idna_start;
   size_t start;
   size_t pos;
   size_t len;
+  Idna_rc rc;
 
   if (NULL == name)
     return GNUNET_SYSERR;
-  start = *off;
-  if (start + strlen (name) + 2 > dst_len)
+
+  if (IDNA_SUCCESS != 
+      (rc = idna_to_ascii_8z (name, &idna_start, IDNA_USE_STD3_ASCII_RULES)))
+  {
+    GNUNET_log (GNUNET_ERROR_TYPE_INFO,
+		_("Failed to convert UTF-8 name `%s' to DNS IDNA format: %s\n"),
+		name,
+		idna_strerror (rc));
     return GNUNET_NO;
+  }
+  idna_name = idna_start;
+  start = *off;
+  if (start + strlen (idna_name) + 2 > dst_len)
+    goto fail;
   pos = start;
   do
   {
-    dot = strchr (name, '.');
+    dot = strchr (idna_name, '.');
     if (NULL == dot)
-      len = strlen (name);
+      len = strlen (idna_name);
     else
-      len = dot - name;
+      len = dot - idna_name;
     if ( (len >= 64) || (len == 0) )
-      return GNUNET_NO; /* segment too long or empty */
+      goto fail; /* segment too long or empty */  
     dst[pos++] = (char) (uint8_t) len;
-    memcpy (&dst[pos], name, len);
+    memcpy (&dst[pos], idna_name, len);
     pos += len;
-    name += len + 1; /* also skip dot */
+    idna_name += len + 1; /* also skip dot */
   }
   while (NULL != dot);
   dst[pos++] = '\0'; /* terminator */
   *off = pos;
+#if WINDOWS
+  idn_free (idna_start);
+#else
+  free (idna_start);
+#endif
   return GNUNET_OK;
+ fail:
+#if WINDOWS
+  idn_free (idna_start);
+#else
+  free (idna_start);
+#endif
+  return GNUNET_NO; 
 }
 
 
@@ -616,6 +771,43 @@ add_soa (char *dst,
 
 
 /**
+ * Add an SRV record to the UDP packet at the given location.
+ *
+ * @param dst where to write the SRV record
+ * @param dst_len number of bytes in dst
+ * @param off pointer to offset where to write the SRV information (increment by bytes used)
+ *            can also change if there was an error
+ * @param srv SRV information to write
+ * @return GNUNET_SYSERR if 'srv' is invalid
+ *         GNUNET_NO if 'srv' did not fit
+ *         GNUNET_OK if 'srv' was added to 'dst'
+ */
+static int
+add_srv (char *dst,
+	 size_t dst_len,
+	 size_t *off,
+	 const struct GNUNET_DNSPARSER_SrvRecord *srv)
+{
+  struct srv_data sd;
+  int ret;
+
+  if (*off + sizeof (struct srv_data) > dst_len)
+    return GNUNET_NO;
+  sd.prio = htons (srv->priority);
+  sd.weight = htons (srv->weight);
+  sd.port = htons (srv->port);
+  memcpy (&dst[*off], &sd, sizeof (sd));
+  (*off) += sizeof (sd);
+  if (GNUNET_OK != (ret = add_name (dst,
+				    dst_len,
+				    off,
+				    srv->target)))
+    return ret;
+  return GNUNET_OK;
+}
+
+
+/**
  * Add a DNS record to the UDP packet at the given location.
  *
  * @param dst where to write the query
@@ -637,10 +829,23 @@ add_record (char *dst,
   size_t start;
   size_t pos;
   struct record_line rl;
-
+  char *name;
+  
   start = *off;
-  ret = add_name (dst, dst_len - sizeof (struct record_line), off, record->name);
-  if (ret != GNUNET_OK)
+  /* for SRV records, we can create the name from the details
+     of the record if needed */
+  name = record->name;
+  if  ( (GNUNET_DNSPARSER_TYPE_SRV == record->type) &&
+	(NULL == name) )
+    GNUNET_asprintf (&name,
+		     "_%s._%s.%s",
+		     record->data.srv->service,
+		     record->data.srv->proto,
+		     record->data.srv->domain_name);
+  ret = add_name (dst, dst_len - sizeof (struct record_line), off, name);
+  if (name != record->name)
+    GNUNET_free (name);
+  if (GNUNET_OK != ret)
     return ret;
   /* '*off' is now the position where we will need to write the record line */
 
@@ -658,6 +863,9 @@ add_record (char *dst,
   case GNUNET_DNSPARSER_TYPE_PTR:
     ret = add_name (dst, dst_len, &pos, record->data.hostname);
     break;
+  case GNUNET_DNSPARSER_TYPE_SRV:
+    ret = add_srv (dst, dst_len, &pos, record->data.srv);
+    break;
   default:
     if (pos + record->data.raw.data_len > dst_len)
     {
@@ -669,7 +877,7 @@ add_record (char *dst,
     ret = GNUNET_OK;
     break;
   }
-  if (ret != GNUNET_OK)
+  if (GNUNET_OK != ret)
   {
     *off = start;
     return GNUNET_NO;

@@ -25,8 +25,6 @@
  *
  * Other functions we might want:
  * - enumerate all known zones
- * - convenience function to gather record and the full affilliated stree
- *   in one shot
  */
 
 #ifndef GNUNET_NAMESTORE_SERVICE_H
@@ -62,6 +60,16 @@ extern "C"
  * Record type for GNS legacy hostnames ("LEHO").
  */
 #define GNUNET_NAMESTORE_TYPE_LEHO 65538
+
+/**
+ * Record type for VPN resolution
+ */
+#define GNUNET_NAMESTORE_TYPE_VPN 65539
+
+/**
+ * Record type for zone revocation
+ */
+#define GNUNET_NAMESTORE_TYPE_REV 65540
 
 /**
  * Entry in the queue.
@@ -100,10 +108,9 @@ GNUNET_NAMESTORE_connect (const struct GNUNET_CONFIGURATION_Handle *cfg);
  * resources).
  *
  * @param h handle to the namestore
- * @param drop set to GNUNET_YES to delete all data in namestore (!)
  */
 void
-GNUNET_NAMESTORE_disconnect (struct GNUNET_NAMESTORE_Handle *h, int drop);
+GNUNET_NAMESTORE_disconnect (struct GNUNET_NAMESTORE_Handle *h);
 
 
 /**
@@ -149,8 +156,32 @@ enum GNUNET_NAMESTORE_RecordFlags
    * This record was added by the system
    * and is pending user confimation
    */
-  GNUNET_NAMESTORE_RF_PENDING = 4
+  GNUNET_NAMESTORE_RF_PENDING = 4,
 
+  /**
+   * This expiration time of the record is a relative
+   * time (not an absolute time).
+   */
+  GNUNET_NAMESTORE_RF_RELATIVE_EXPIRATION = 8,
+
+  /**
+   * This record should not be used unless all (other) records with an absolute
+   * expiration time have expired.
+   */
+  GNUNET_NAMESTORE_RF_SHADOW_RECORD = 16
+
+  /**
+   * When comparing flags for record equality for removal,
+   * which flags should must match (in addition to the type,
+   * name, expiration value and data of the record)?  All flags
+   * that are not listed here will be ignored for this purpose.
+   * (for example, we don't expect that users will remember to
+   * pass the '--private' option when removing a record from
+   * the namestore, hence we don't require this particular option
+   * to match upon removal).  See also
+   * 'GNUNET_NAMESTORE_records_cmp'.
+   */
+#define GNUNET_NAMESTORE_RF_RCMP_FLAGS (GNUNET_NAMESTORE_RF_RELATIVE_EXPIRATION)
 };
 
 
@@ -162,13 +193,18 @@ struct GNUNET_NAMESTORE_RecordData
 
   /**
    * Binary value stored in the DNS record.
+   * FIXME: goofy API: sometimes 'data' is individually
+   * 'malloc'ed, sometimes it points into some existing
+   * data area (so sometimes this should be a 'void *',
+   * sometimes a 'const void *').  This is unclean.
    */
   const void *data;
 
   /**
-   * Expiration time for the DNS record.
+   * Expiration time for the DNS record.  Can be relative
+   * or absolute, depending on 'flags'.
    */
-  struct GNUNET_TIME_Absolute expiration;
+  uint64_t expiration_time;
 
   /**
    * Number of bytes in 'data'.
@@ -222,7 +258,7 @@ GNUNET_NAMESTORE_record_put (struct GNUNET_NAMESTORE_Handle *h,
  * to validate signatures received from the network.
  *
  * @param public_key public key of the zone
- * @param expire block expiration
+ * @param freshness time set for block expiration
  * @param name name that is being mapped (at most 255 characters long)
  * @param rd_count number of entries in 'rd' array
  * @param rd array of records with data to store
@@ -242,6 +278,7 @@ GNUNET_NAMESTORE_verify_signature (const struct GNUNET_CRYPTO_RsaPublicKeyBinary
  * Store an item in the namestore.  If the item is already present,
  * the expiration time is updated to the max of the existing time and
  * the new time.  This API is used by the authority of a zone.
+ * FIXME: consider allowing to pass multiple records in one call!
  *
  * @param h handle to the namestore
  * @param pkey private key of the zone
@@ -289,7 +326,7 @@ GNUNET_NAMESTORE_record_remove (struct GNUNET_NAMESTORE_Handle *h,
  *
  * @param cls closure
  * @param zone_key public key of the zone
- * @param expire when does the corresponding block in the DHT expire (until
+ * @param freshness when does the corresponding block in the DHT expire (until
  *               when should we never do a DHT lookup for the same name again)?; 
  *               GNUNET_TIME_UNIT_ZERO_ABS if there are no records of any type in the namestore,
  *               or the expiration time of the block in the namestore (even if there are zero
@@ -311,7 +348,14 @@ typedef void (*GNUNET_NAMESTORE_RecordProcessor) (void *cls,
 
 /**
  * Get a result for a particular key from the namestore.  The processor
- * will only be called once.  
+ * will only be called once.  When using this functions, relative expiration
+ * times will be converted to absolute expiration times and a signature
+ * will be created if we are the authority.  The record data and signature
+ * passed to 'proc' is thus always suitable for passing on to other peers
+ * (if we are the authority).  If the record type is NOT set to 'ANY' and
+ * if we are NOT the authority, then non-matching records may be omitted
+ * from the result and no valid signature can be created; in this case,
+ * 'signature' will be NULL and the result cannot be given to other peers.
  *
  * @param h handle to the namestore
  * @param zone zone to look up a record from
@@ -325,10 +369,10 @@ typedef void (*GNUNET_NAMESTORE_RecordProcessor) (void *cls,
  */
 struct GNUNET_NAMESTORE_QueueEntry *
 GNUNET_NAMESTORE_lookup_record (struct GNUNET_NAMESTORE_Handle *h, 
-			      const struct GNUNET_CRYPTO_ShortHashCode *zone,
-			      const char *name,
-			      uint32_t record_type,
-			      GNUNET_NAMESTORE_RecordProcessor proc, void *proc_cls);
+				const struct GNUNET_CRYPTO_ShortHashCode *zone,
+				const char *name,
+				uint32_t record_type,
+				GNUNET_NAMESTORE_RecordProcessor proc, void *proc_cls);
 
 
 /**
@@ -354,9 +398,28 @@ GNUNET_NAMESTORE_zone_to_name (struct GNUNET_NAMESTORE_Handle *h,
 
 /**
  * Starts a new zone iteration (used to periodically PUT all of our
- * records into our DHT). "proc" will be called once
- * immediately, and then again after
- * "GNUNET_NAMESTORE_zone_iterator_next" is invoked.
+ * records into our DHT). "proc" will be called once immediately, and
+ * then again after "GNUNET_NAMESTORE_zone_iterator_next" is invoked.
+ *
+ * By specifying a 'zone' of NULL and setting 'GNUNET_NAMESTORE_RF_AUTHORITY'
+ * in 'must_have_flags', we can iterate over all records for which we are
+ * the authority (the 'authority' flag will NOT be set in the returned
+ * records anyway).  
+ *
+ * The 'GNUNET_NAMESTORE_RF_RELATIVE_EXPIRATION'
+ * bit in 'must_have_flags' has a special meaning:
+ *
+ * 0) If the bit is clear, all relative expriation times are converted to
+ *    absolute expiration times.  This is useful for performing DHT PUT
+ *    operations (and zone transfers) of our zone.  The generated signatures
+ *    will be valid for other peers.
+ * 1) if it is set, it means that relative expiration times should be
+ *    preserved when returned (this is useful for the zone editor user 
+ *    interface).  No signatures will be created in this case, as 
+ *    signatures must not cover records with relative expiration times.
+ *
+ * Note that not all queries against this interface are equally performant
+ * as for some combinations no efficient index may exist.
  *
  * @param h handle to the namestore
  * @param zone zone to access, NULL for all zones
@@ -388,7 +451,9 @@ GNUNET_NAMESTORE_zone_iterator_next (struct GNUNET_NAMESTORE_ZoneIterator *it);
 
 
 /**
- * Stops iteration and releases the namestore handle for further calls.
+ * Stops iteration and releases the namestore handle for further calls.  Must
+ * be called on any iteration that has not yet completed prior to calling
+ * 'GNUNET_NAMESTORE_disconnect'.
  *
  * @param it the iterator
  */
@@ -398,7 +463,9 @@ GNUNET_NAMESTORE_zone_iteration_stop (struct GNUNET_NAMESTORE_ZoneIterator *it);
 
 /**
  * Cancel a namestore operation.  The final callback from the
- * operation must not have been done yet.
+ * operation must not have been done yet.  Must be called on any
+ * namestore operation that has not yet completed prior to calling
+ * 'GNUNET_NAMESTORE_disconnect'.
  *
  * @param qe operation to cancel
  */
@@ -423,6 +490,7 @@ size_t
 GNUNET_NAMESTORE_records_get_size (unsigned int rd_count,
 				   const struct GNUNET_NAMESTORE_RecordData *rd);
 
+
 /**
  * Serialize the given records to the given destination buffer.
  *
@@ -431,7 +499,7 @@ GNUNET_NAMESTORE_records_get_size (unsigned int rd_count,
  * @param dest_size size of the destination array
  * @param dest where to write the result
  *
- * @return the size of serialized records
+ * @return the size of serialized records, -1 if records do not fit
  */
 ssize_t
 GNUNET_NAMESTORE_records_serialize (unsigned int rd_count,
@@ -456,15 +524,6 @@ GNUNET_NAMESTORE_records_deserialize (size_t len,
 				      unsigned int rd_count,
 				      struct GNUNET_NAMESTORE_RecordData *dest);
 
-
-/**
- * Checks if a name is wellformed
- *
- * @param name the name to check
- * @return GNUNET_OK on success, GNUNET_SYSERR on error
- */
-int
-GNUNET_NAMESTORE_check_name (const char * name);
 
 /**
  * Convert the 'value' of a record to a string.
@@ -515,6 +574,16 @@ GNUNET_NAMESTORE_typename_to_number (const char *typename);
  */
 const char *
 GNUNET_NAMESTORE_number_to_typename (uint32_t type);
+
+
+/**
+ * Test if a given record is expired.
+ * 
+ * @return GNUNET_YES if the record is expired,
+ *         GNUNET_NO if not
+ */
+int
+GNUNET_NAMESTORE_is_expired (const struct GNUNET_NAMESTORE_RecordData *rd);
 
 
 #if 0                           /* keep Emacsens' auto-indent happy */

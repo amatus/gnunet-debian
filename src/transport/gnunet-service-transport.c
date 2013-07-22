@@ -37,6 +37,7 @@
 #include "gnunet-service-transport_neighbours.h"
 #include "gnunet-service-transport_plugins.h"
 #include "gnunet-service-transport_validation.h"
+#include "gnunet-service-transport_manipulation.h"
 #include "transport.h"
 
 /* globals */
@@ -62,6 +63,16 @@ struct GNUNET_PeerIdentity GST_my_identity;
 struct GNUNET_PEERINFO_Handle *GST_peerinfo;
 
 /**
+ * Hostkey generation context
+ */
+struct GNUNET_CRYPTO_RsaKeyGenerationContext *GST_keygen;
+
+/**
+ * Handle to our service's server.
+ */
+static struct GNUNET_SERVER_Handle *GST_server;
+
+/**
  * Our public key.
  */
 struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded GST_my_public_key;
@@ -81,6 +92,11 @@ struct GNUNET_ATS_SchedulingHandle *GST_ats;
  */
 static int connections;
 
+/**
+ * Hello address expiration
+ */
+struct GNUNET_TIME_Relative hello_expiration;
+
 
 /**
  * Transmit our HELLO message to the given (connected) neighbour.
@@ -90,17 +106,21 @@ static int connections;
  * @param ats performance information (unused)
  * @param ats_count number of records in ats (unused)
  * @param address the address
+ * @param bandwidth_in inbound quota in NBO
+ * @param bandwidth_out outbound quota in NBO
  */
 static void
 transmit_our_hello (void *cls, const struct GNUNET_PeerIdentity *target,
                     const struct GNUNET_ATS_Information *ats,
                     uint32_t ats_count,
-                    const struct GNUNET_HELLO_Address *address)
+                    const struct GNUNET_HELLO_Address *address,
+                    struct GNUNET_BANDWIDTH_Value32NBO bandwidth_in,
+                    struct GNUNET_BANDWIDTH_Value32NBO bandwidth_out)
 {
   const struct GNUNET_MessageHeader *hello = cls;
 
   GST_neighbours_send (target, (const char *) hello, ntohs (hello->size),
-                       GNUNET_CONSTANTS_HELLO_ADDRESS_EXPIRATION, NULL, NULL);
+                       hello_expiration, NULL, NULL);
 }
 
 
@@ -179,6 +199,7 @@ process_payload (const struct GNUNET_PeerIdentity *peer,
       htonl ((uint32_t) GST_neighbour_get_latency (peer).rel_value);
   memcpy (&ap[ats_count + 1], message, ntohs (message->size));
 
+  GNUNET_ATS_address_add (GST_ats, address, session, ap, ats_count + 1);
   GNUNET_ATS_address_update (GST_ats, address, session, ap, ats_count + 1);
   GST_clients_broadcast (&im->header, GNUNET_YES);
 
@@ -209,8 +230,8 @@ process_payload (const struct GNUNET_PeerIdentity *peer,
  * @return how long the plugin should wait until receiving more data
  *         (plugins that do not support this, can ignore the return value)
  */
-static struct GNUNET_TIME_Relative
-plugin_env_receive_callback (void *cls, const struct GNUNET_PeerIdentity *peer,
+struct GNUNET_TIME_Relative
+GST_receive_callback (void *cls, const struct GNUNET_PeerIdentity *peer,
                              const struct GNUNET_MessageHeader *message,
                              const struct GNUNET_ATS_Information *ats,
                              uint32_t ats_count, struct Session *session,
@@ -287,11 +308,6 @@ plugin_env_receive_callback (void *cls, const struct GNUNET_PeerIdentity *peer,
     break;
   }
 end:
-#if 1
-  /* FIXME: this should not be needed, and not sure it's good to have it, but without
-   * this connections seem to go extra-slow */
-  GNUNET_ATS_address_update (GST_ats, &address, session, ats, ats_count);
-#endif
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
               "Allowing receive from peer %s to continue in %llu ms\n",
               GNUNET_i2s (peer), (unsigned long long) ret.rel_value);
@@ -309,16 +325,17 @@ end:
  * @param addr one of the addresses of the host
  *        the specific address format depends on the transport
  * @param addrlen length of the address
+ * @param dest_plugin destination plugin to use this address with
  */
 static void
 plugin_env_address_change_notification (void *cls, int add_remove,
-                                        const void *addr, size_t addrlen)
+                                        const void *addr, size_t addrlen,
+                                        const char *dest_plugin)
 {
-  const char *plugin_name = cls;
   struct GNUNET_HELLO_Address address;
 
   address.peer = GST_my_identity;
-  address.transport_name = plugin_name;
+  address.transport_name = dest_plugin;
   address.address = addr;
   address.address_length = addrlen;
   GST_hello_modify_addresses (add_remove, &address);
@@ -346,7 +363,7 @@ plugin_env_session_end (void *cls, const struct GNUNET_PeerIdentity *peer,
   struct GNUNET_HELLO_Address address;
 
   GNUNET_assert (strlen (transport_name) > 0);
-  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Session %X to peer `%s' ended \n",
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Session %p to peer `%s' ended \n",
               session, GNUNET_i2s (peer));
   if (NULL != session)
     GNUNET_log_from (GNUNET_ERROR_TYPE_DEBUG | GNUNET_ERROR_TYPE_BULK,
@@ -358,6 +375,8 @@ plugin_env_session_end (void *cls, const struct GNUNET_PeerIdentity *peer,
   address.address_length = 0;
   address.transport_name = transport_name;
   GST_neighbours_session_terminated (peer, session);
+
+  /* Tell ATS that session has ended */
   GNUNET_ATS_address_destroyed (GST_ats, &address, session);
 }
 
@@ -392,7 +411,7 @@ plugin_env_address_to_type (void *cls,
                 addrlen,
                 GNUNET_a2s(addr, addrlen));
     GNUNET_break (0);
-    return (const struct GNUNET_ATS_Information) ats;
+    return ats;
   }
   return GNUNET_ATS_address_get_type(GST_ats, addr, addrlen);
 }
@@ -448,12 +467,16 @@ ats_request_address_change (void *cls,
  * @param peer the peer that connected
  * @param ats performance data
  * @param ats_count number of entries in ats
+ * @param bandwidth_in inbound bandwidth in NBO
+ * @param bandwidth_out outbound bandwidth in NBO
  */
 static void
 neighbours_connect_notification (void *cls,
                                  const struct GNUNET_PeerIdentity *peer,
                                  const struct GNUNET_ATS_Information *ats,
-                                 uint32_t ats_count)
+                                 uint32_t ats_count,
+                                 struct GNUNET_BANDWIDTH_Value32NBO bandwidth_in,
+                                 struct GNUNET_BANDWIDTH_Value32NBO bandwidth_out)
 {
   size_t len =
       sizeof (struct ConnectInfoMessage) +
@@ -471,6 +494,8 @@ neighbours_connect_notification (void *cls,
   connect_msg->header.type = htons (GNUNET_MESSAGE_TYPE_TRANSPORT_CONNECT);
   connect_msg->ats_count = htonl (ats_count);
   connect_msg->id = *peer;
+  connect_msg->quota_in = bandwidth_in;
+  connect_msg->quota_out = bandwidth_out;
   ap = (struct GNUNET_ATS_Information *) &connect_msg[1];
   memcpy (ap, ats, ats_count * sizeof (struct GNUNET_ATS_Information));
   GST_clients_broadcast (&connect_msg->header, GNUNET_NO);
@@ -530,6 +555,11 @@ neighbours_address_notification (void *cls,
 static void
 shutdown_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 {
+  if (NULL != GST_keygen)
+  {
+    GNUNET_CRYPTO_rsa_key_create_stop (GST_keygen);
+    GST_keygen = NULL;
+  }
   GST_neighbours_stop ();
   GST_validation_stop ();
   GST_plugins_unload ();
@@ -539,22 +569,130 @@ shutdown_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
   GST_clients_stop ();
   GST_blacklist_stop ();
   GST_hello_stop ();
+  GST_manipulation_stop ();
 
-  if (GST_peerinfo != NULL)
+  if (NULL != GST_peerinfo)
   {
     GNUNET_PEERINFO_disconnect (GST_peerinfo);
     GST_peerinfo = NULL;
   }
-  if (GST_stats != NULL)
+  if (NULL != GST_stats)
   {
     GNUNET_STATISTICS_destroy (GST_stats, GNUNET_NO);
     GST_stats = NULL;
   }
-  if (GST_my_private_key != NULL)
+  if (NULL != GST_my_private_key)
   {
     GNUNET_CRYPTO_rsa_key_free (GST_my_private_key);
     GST_my_private_key = NULL;
   }
+  GST_server = NULL;
+}
+
+
+/**
+ * Callback for hostkey read/generation
+ *
+ * @param cls NULL
+ * @param pk the private key
+ * @param emsg error message
+ */
+static void
+key_generation_cb (void *cls,
+                   struct GNUNET_CRYPTO_RsaPrivateKey *pk,
+                   const char *emsg)
+{
+  struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded tmp;
+  long long unsigned int max_fd_cfg;
+  int max_fd_rlimit;
+  int max_fd;
+
+  GST_keygen = NULL;
+  if (NULL == pk)
+  {
+    GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
+                _("Transport service could not access hostkey: %s. Exiting.\n"),
+                emsg);
+    GNUNET_SCHEDULER_shutdown ();
+    return;
+  }
+  GST_my_private_key = pk;
+
+  GST_stats = GNUNET_STATISTICS_create ("transport", GST_cfg);
+  if (NULL == GST_stats)
+  {
+    GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
+                _("Could not access STATISTICS service.  Exiting.\n"));
+    GNUNET_SCHEDULER_shutdown ();
+    return;
+  }
+  GST_peerinfo = GNUNET_PEERINFO_connect (GST_cfg);
+  memset (&GST_my_public_key, '\0', sizeof (GST_my_public_key));
+  memset (&tmp, '\0', sizeof (tmp));
+  GNUNET_CRYPTO_rsa_key_get_public (GST_my_private_key, &GST_my_public_key);
+  GNUNET_CRYPTO_hash (&GST_my_public_key, sizeof (GST_my_public_key),
+                      &GST_my_identity.hashPubKey);
+
+  GNUNET_assert (NULL != GST_my_private_key);
+  GNUNET_assert (0 != memcmp (&GST_my_public_key, &tmp, sizeof (GST_my_public_key)));
+
+  GNUNET_SCHEDULER_add_delayed (GNUNET_TIME_UNIT_FOREVER_REL, &shutdown_task,
+                                NULL);
+  if (NULL == GST_peerinfo)
+  {
+    GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
+                _("Could not access PEERINFO service.  Exiting.\n"));
+    GNUNET_SCHEDULER_shutdown ();
+    return;
+  }
+
+  max_fd_rlimit = 0;
+  max_fd_cfg = 0;
+  max_fd = 0;
+#if HAVE_GETRLIMIT
+  struct rlimit r_file;
+  if (0 == getrlimit (RLIMIT_NOFILE, &r_file))
+  {
+		max_fd_rlimit = r_file.rlim_cur;
+		GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+								"Maximum number of open files was: %u/%u\n", r_file.rlim_cur,
+								r_file.rlim_max);
+  }
+  max_fd_rlimit = (9 * max_fd_rlimit) / 10; /* Keep 10% for rest of transport */
+#endif
+  GNUNET_CONFIGURATION_get_value_number (GST_cfg, "transport", "MAX_FD", &max_fd_cfg);
+
+  if (max_fd_cfg > max_fd_rlimit)
+  	max_fd = max_fd_cfg;
+  else
+  	max_fd = max_fd_rlimit;
+  if (max_fd < DEFAULT_MAX_FDS)
+  	max_fd = DEFAULT_MAX_FDS;
+
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+              "Limiting number of sockets to %u: validation %u, neighbors: %u\n",
+              max_fd, (max_fd / 3) , (max_fd / 3) * 2);
+
+  /* start subsystems */
+  GST_hello_start (&process_hello_update, NULL);
+  GNUNET_assert (NULL != GST_hello_get());
+  GST_blacklist_start (GST_server);
+  GST_ats =
+      GNUNET_ATS_scheduling_init (GST_cfg, &ats_request_address_change, NULL);
+  GST_manipulation_init ();
+  GST_plugins_load (&GST_manipulation_recv,
+                    &plugin_env_address_change_notification,
+                    &plugin_env_session_end,
+                    &plugin_env_address_to_type);
+  GST_neighbours_start (NULL,
+                        &neighbours_connect_notification,
+                        &neighbours_disconnect_notification,
+                        &neighbours_address_notification,
+                        (max_fd / 3) * 2);
+  GST_clients_start (GST_server);
+  GST_validation_start ((max_fd / 3));
+  if (NULL != GST_server)
+    GNUNET_SERVER_resume (GST_server);
 }
 
 
@@ -570,7 +708,7 @@ run (void *cls, struct GNUNET_SERVER_Handle *server,
      const struct GNUNET_CONFIGURATION_Handle *c)
 {
   char *keyfile;
-  struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded tmp;
+
   /* setup globals */
   GST_cfg = c;
   if (GNUNET_OK !=
@@ -583,52 +721,22 @@ run (void *cls, struct GNUNET_SERVER_Handle *server,
     GNUNET_SCHEDULER_shutdown ();
     return;
   }
-  GST_my_private_key = GNUNET_CRYPTO_rsa_key_create_from_file (keyfile);
+  if (GNUNET_OK !=
+      GNUNET_CONFIGURATION_get_value_time (c, "transport", "HELLO_EXPIRATION",
+                                           &hello_expiration))
+  {
+    hello_expiration = GNUNET_CONSTANTS_HELLO_ADDRESS_EXPIRATION;
+  }
+  GST_server = server;
+  GNUNET_SERVER_suspend (server);
+  GST_keygen = GNUNET_CRYPTO_rsa_key_create_start (keyfile, &key_generation_cb, NULL);
   GNUNET_free (keyfile);
-  if (GST_my_private_key == NULL)
+  if (NULL == GST_keygen)
   {
     GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
-                _("Transport service could not access hostkey.  Exiting.\n"));
+                _("Transport service is unable to access hostkey. Exiting.\n"));
     GNUNET_SCHEDULER_shutdown ();
-    return;
   }
-  GST_stats = GNUNET_STATISTICS_create ("transport", c);
-  GST_peerinfo = GNUNET_PEERINFO_connect (c);
-  memset (&GST_my_public_key, '\0', sizeof (GST_my_public_key));
-  memset (&tmp, '\0', sizeof (tmp));
-  GNUNET_CRYPTO_rsa_key_get_public (GST_my_private_key, &GST_my_public_key);
-  GNUNET_CRYPTO_hash (&GST_my_public_key, sizeof (GST_my_public_key),
-                      &GST_my_identity.hashPubKey);
-
-  GNUNET_assert (NULL != GST_my_private_key);
-  GNUNET_assert (0 != memcmp (&GST_my_public_key, &tmp, sizeof (GST_my_public_key)));
-
-  GNUNET_SCHEDULER_add_delayed (GNUNET_TIME_UNIT_FOREVER_REL, &shutdown_task,
-                                NULL);
-  if (GST_peerinfo == NULL)
-  {
-    GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
-                _("Could not access PEERINFO service.  Exiting.\n"));
-    GNUNET_SCHEDULER_shutdown ();
-    return;
-  }
-
-  /* start subsystems */
-  GST_hello_start (&process_hello_update, NULL);
-  GNUNET_assert (NULL != GST_hello_get());
-  GST_blacklist_start (server);
-  GST_ats =
-      GNUNET_ATS_scheduling_init (GST_cfg, &ats_request_address_change, NULL);
-  GST_plugins_load (&plugin_env_receive_callback,
-                    &plugin_env_address_change_notification,
-                    &plugin_env_session_end,
-                    &plugin_env_address_to_type);
-  GST_neighbours_start (NULL,
-                        &neighbours_connect_notification,
-                        &neighbours_disconnect_notification,
-                        &neighbours_address_notification);
-  GST_clients_start (server);
-  GST_validation_start ();
 }
 
 

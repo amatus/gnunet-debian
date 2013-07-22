@@ -110,7 +110,7 @@ join_cb (void *cls)
  */
 static int
 receive_cb (void *cls, struct GNUNET_CHAT_Room *room,
-            const GNUNET_HashCode * sender,
+            const struct GNUNET_HashCode * sender,
             const struct GNUNET_CONTAINER_MetaData *member_info,
             const char *message, struct GNUNET_TIME_Absolute timestamp,
             enum GNUNET_CHAT_MsgOptions options)
@@ -118,7 +118,7 @@ receive_cb (void *cls, struct GNUNET_CHAT_Room *room,
   char *non_unique_nick;
   char *nick;
   int nick_is_a_dup;
-  char *time;
+  const char *timestr;
   const char *fmt;
 
   if (NULL == sender)
@@ -176,10 +176,9 @@ receive_cb (void *cls, struct GNUNET_CHAT_Room *room,
     fmt = _("(%s) <%s> said using an unknown message type: %s\n");
     break;
   }
-  time = GNUNET_STRINGS_absolute_time_to_string (timestamp);
-  FPRINTF (stdout, fmt, time, nick, message);
+  timestr = GNUNET_STRINGS_absolute_time_to_string (timestamp);
+  FPRINTF (stdout, fmt, timestr, nick, message);
   GNUNET_free (nick);
-  GNUNET_free (time);
   return GNUNET_OK;
 }
 
@@ -199,7 +198,7 @@ static int
 confirmation_cb (void *cls, struct GNUNET_CHAT_Room *room,
                  uint32_t orig_seq_number,
                  struct GNUNET_TIME_Absolute timestamp,
-                 const GNUNET_HashCode * receiver)
+                 const struct GNUNET_HashCode * receiver)
 {
   char *nick;
   char *unique_nick;
@@ -238,7 +237,7 @@ member_list_cb (void *cls, const struct GNUNET_CONTAINER_MetaData *member_info,
   char *nick;
   char *non_unique_nick;
   int nick_is_a_dup;
-  GNUNET_HashCode id;
+  struct GNUNET_HashCode id;
   struct UserList *pos;
   struct UserList *prev;
 
@@ -304,7 +303,7 @@ do_join (const char *arg, const void *xtra)
 {
   char *my_name;
   int my_name_is_a_dup;
-  GNUNET_HashCode me;
+  struct GNUNET_HashCode me;
 
   if (arg[0] == '#')
     arg++;                      /* ignore first hash */
@@ -343,7 +342,7 @@ do_nick (const char *msg, const void *xtra)
 {
   char *my_name;
   int my_name_is_a_dup;
-  GNUNET_HashCode me;
+  struct GNUNET_HashCode me;
 
   GNUNET_CHAT_leave_room (room);
   free_user_list ();
@@ -383,7 +382,7 @@ do_names (const char *msg, const void *xtra)
   char *unique_name;
   int name_is_a_dup;
   struct UserList *pos;
-  GNUNET_HashCode pid;
+  struct GNUNET_HashCode pid;
 
   FPRINTF (stdout, _("Users in room `%s': "), room_name);
   pos = users;
@@ -424,8 +423,8 @@ static int
 do_send_pm (const char *msg, const void *xtra)
 {
   char *user;
-  GNUNET_HashCode uid;
-  GNUNET_HashCode pid;
+  struct GNUNET_HashCode uid;
+  struct GNUNET_HashCode pid;
   uint32_t seq;
   struct UserList *pos;
 
@@ -451,7 +450,7 @@ do_send_pm (const char *msg, const void *xtra)
     GNUNET_CRYPTO_hash (&pos->pkey,
                         sizeof (struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded),
                         &pid);
-    if (0 == memcmp (&pid, &uid, sizeof (GNUNET_HashCode)))
+    if (0 == memcmp (&pid, &uid, sizeof (struct GNUNET_HashCode)))
       break;
     pos = pos->next;
   }
@@ -661,7 +660,7 @@ static void
 run (void *cls, char *const *args, const char *cfgfile,
      const struct GNUNET_CONFIGURATION_Handle *c)
 {
-  GNUNET_HashCode me;
+  struct GNUNET_HashCode me;
   char *my_name;
   int my_name_is_a_dup;
 
@@ -737,6 +736,10 @@ main (int argc, char *const *argv)
   flags |= O_NONBLOCK;
   fcntl (0, F_SETFL, flags);
 #endif
+
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+
   return (GNUNET_OK ==
           GNUNET_PROGRAM_run (argc, argv, "gnunet-chat",
                               gettext_noop ("Join a chat on GNUnet."), options,

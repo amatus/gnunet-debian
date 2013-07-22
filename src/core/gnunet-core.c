@@ -32,6 +32,38 @@
 #include "gnunet_core_service.h"
 #include "gnunet_program_lib.h"
 
+/**
+ * Option -m.
+ */
+static int monitor_connections;
+
+/**
+ * Current number of connections in monitor mode
+ */
+static int monitor_connections_counter;
+
+static struct GNUNET_CORE_Handle *ch;
+
+static struct GNUNET_PeerIdentity my_id;
+
+/**
+ * Task run in monitor mode when the user presses CTRL-C to abort.
+ * Stops monitoring activity.
+ *
+ * @param cls the 'struct GNUNET_TRANSPORT_PeerIterateContext *'
+ * @param tc scheduler context
+ */
+static void
+shutdown_task (void *cls,
+               const struct GNUNET_SCHEDULER_TaskContext *tc)
+{
+  if (NULL != ch)
+  {
+    GNUNET_CORE_disconnect (ch);
+    ch = NULL;
+  }
+}
+
 
 /**
  * Callback for retrieving a list of connected peers.
@@ -54,6 +86,73 @@ connected_peer_callback (void *cls, const struct GNUNET_PeerIdentity *peer,
   printf (_("Peer `%s'\n"), (const char *) &enc);
 }
 
+void
+monitor_notify_startup (void *cls,
+                       struct GNUNET_CORE_Handle * server,
+                       const struct GNUNET_PeerIdentity *
+                       my_identity)
+{
+  my_id = (*my_identity);
+}
+
+
+/**
+ * Function called to notify core users that another
+ * peer connected to us.
+ *
+ * @param cls closure
+ * @param peer the peer that connected
+ * @param ats performance data
+ * @param ats_count number of entries in ats (excluding 0-termination)
+ */
+static void
+monitor_notify_connect (void *cls, const struct GNUNET_PeerIdentity *peer,
+                const struct GNUNET_ATS_Information *ats, uint32_t ats_count)
+{
+  struct GNUNET_TIME_Absolute now = GNUNET_TIME_absolute_get();
+  const char *now_str;
+
+  if (0 != memcmp (&my_id, peer, sizeof (my_id)))
+  {
+    monitor_connections_counter ++;
+    now_str = GNUNET_STRINGS_absolute_time_to_string (now);
+    FPRINTF (stdout, _("%24s: %-17s %4s   (%u connections in total)\n"),
+             now_str,
+             _("Connected to"),
+             GNUNET_i2s (peer),
+             monitor_connections_counter);
+  }
+}
+
+
+/**
+ * Function called to notify core users that another
+ * peer disconnected from us.
+ *
+ * @param cls closure
+ * @param peer the peer that disconnected
+ */
+static void
+monitor_notify_disconnect (void *cls, const struct GNUNET_PeerIdentity *peer)
+{
+  struct GNUNET_TIME_Absolute now = GNUNET_TIME_absolute_get();
+  const char *now_str;
+
+  if (0 != memcmp (&my_id, peer, sizeof (my_id)))
+  {
+    now_str = GNUNET_STRINGS_absolute_time_to_string (now);
+
+    GNUNET_assert (monitor_connections_counter > 0);
+    monitor_connections_counter--;
+    FPRINTF (stdout, _("%24s: %-17s %4s   (%u connections in total)\n"),
+             now_str,
+             _("Disconnected from"),
+             GNUNET_i2s (peer),
+             monitor_connections_counter);
+  }
+}
+
+
 
 /**
  * Main function that will be run by the scheduler.
@@ -67,12 +166,32 @@ static void
 run (void *cls, char *const *args, const char *cfgfile,
      const struct GNUNET_CONFIGURATION_Handle *cfg)
 {
+  static const struct GNUNET_CORE_MessageHandler handlers[] = {
+    {NULL, 0, 0}
+  };
   if (args[0] != NULL)
   {
     FPRINTF (stderr, _("Invalid command line argument `%s'\n"), args[0]);
     return;
   }
-  GNUNET_CORE_iterate_peers (cfg, &connected_peer_callback, NULL);
+  if (GNUNET_NO == monitor_connections)
+    GNUNET_CORE_iterate_peers (cfg, &connected_peer_callback, NULL);
+  else
+  {
+    memset(&my_id, '\0', sizeof (my_id));
+    ch = GNUNET_CORE_connect (cfg, NULL,
+                              monitor_notify_startup,
+                              monitor_notify_connect,
+                              monitor_notify_disconnect,
+                              NULL, GNUNET_NO,
+                              NULL, GNUNET_NO,
+                              handlers);
+
+    if (NULL == ch)
+      GNUNET_SCHEDULER_add_now (shutdown_task, NULL);
+    else
+      GNUNET_SCHEDULER_add_delayed (GNUNET_TIME_UNIT_FOREVER_REL, shutdown_task, NULL);
+  }
 }
 
 
@@ -86,14 +205,29 @@ run (void *cls, char *const *args, const char *cfgfile,
 int
 main (int argc, char *const *argv)
 {
+  int res;
   static const struct GNUNET_GETOPT_CommandLineOption options[] = {
+    {'m', "monitor", NULL,
+     gettext_noop ("provide information about all current connections (continuously)"),
+     0, &GNUNET_GETOPT_set_one, &monitor_connections},
     GNUNET_GETOPT_OPTION_END
   };
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "gnunet-core",
-                              gettext_noop
-                              ("Print information about connected peers."),
-                              options, &run, NULL)) ? 0 : 1;
+
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+
+
+  res = GNUNET_PROGRAM_run (argc, argv, "gnunet-core",
+                      gettext_noop
+                      ("Print information about connected peers."),
+                      options, &run, NULL);
+
+  GNUNET_free ((void *) argv);
+
+  if (GNUNET_OK == res)
+    return 0;
+  else
+    return 1;
 }
 
 /* end of gnunet-core.c */

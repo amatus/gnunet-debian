@@ -4,7 +4,7 @@ libdir=@libdir@
 includedir=@includedir@
 
 Name: GNUnet datacache
-Description: Provides datacache API implementation
+Description: Provides datacache API for temporary storage to disk
 URL: http://gnunet.org
 Version: @VERSION@
 Requires:

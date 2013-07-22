@@ -36,6 +36,12 @@
 #include "gnunet_server_lib.h"
 #include "gnunet_service_lib.h"
 
+#if HAVE_MALLINFO
+#include <malloc.h>
+#include "gauger.h"
+#endif
+
+
 #define LOG(kind,...) GNUNET_log_from (kind, "util", __VA_ARGS__)
 
 #define LOG_STRERROR(kind,syscall) GNUNET_log_from_strerror (kind, "util", syscall)
@@ -62,6 +68,7 @@ struct IPv4NetworkSet
 };
 
 /**
+
  * @brief network in CIDR notation for IPV6.
  */
 struct IPv6NetworkSet
@@ -653,10 +660,12 @@ check_access (void *cls, const struct GNUNET_CONNECTION_Credentials *uc,
     if (GNUNET_YES == sctx->match_uid) 
     {
       /* UID match required */
-      ret = (NULL != uc) && (uc->uid == geteuid ());
+      ret = (NULL != uc) && ( (0 == uc->uid) || (uc->uid == geteuid ()) );
     }
     else if ( (GNUNET_YES == sctx->match_gid) &&
-	      ( (NULL == uc) || (uc->uid != geteuid ()) ) )
+	      ( (NULL == uc) || 
+		( (0 != uc->uid) &&
+		  (uc->uid != geteuid ()) ) ) )
     {
       /* group match required and UID does not match */
       if (NULL == uc) 
@@ -931,9 +940,14 @@ GNUNET_SERVICE_get_server_addresses (const char *service_name,
   port = 0;
   if (GNUNET_CONFIGURATION_have_value (cfg, service_name, "PORT"))
   {
-    GNUNET_break (GNUNET_OK ==
-                  GNUNET_CONFIGURATION_get_value_number (cfg, service_name,
-                                                         "PORT", &port));
+    if (GNUNET_OK !=
+	GNUNET_CONFIGURATION_get_value_number (cfg, service_name,
+					       "PORT", &port))
+    {
+      LOG (GNUNET_ERROR_TYPE_ERROR,
+           _("Require valid port number for service `%s' in configuration!\n"),
+           service_name);
+    }
     if (port > 65535)
     {
       LOG (GNUNET_ERROR_TYPE_ERROR,
@@ -968,12 +982,15 @@ GNUNET_SERVICE_get_server_addresses (const char *service_name,
     {
       LOG (GNUNET_ERROR_TYPE_WARNING,
            _("UNIXPATH `%s' too long, maximum length is %llu\n"), unixpath,
-           sizeof (s_un.sun_path));
-      GNUNET_free_non_null (hostname);
-      GNUNET_free (unixpath);
-      return GNUNET_SYSERR;
-    }
+           (unsigned long long) sizeof (s_un.sun_path));
+      unixpath = GNUNET_NETWORK_shorten_unixpath (unixpath);
+      LOG (GNUNET_ERROR_TYPE_INFO,
+	   _("Using `%s' instead\n"), unixpath);
 
+    }
+  }
+  if (NULL != unixpath)
+  {
     desc = GNUNET_NETWORK_socket_create (AF_UNIX, SOCK_STREAM, 0);
     if (NULL == desc)
     {
@@ -1487,6 +1504,8 @@ service_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
   struct GNUNET_SERVICE_Context *sctx = cls;
   unsigned int i;
 
+  if (0 != (GNUNET_SCHEDULER_REASON_SHUTDOWN & tc->reason))
+    return;
   GNUNET_RESOLVER_connect (sctx->cfg);
   if (NULL != sctx->lsocks)
     sctx->server =
@@ -1712,6 +1731,7 @@ GNUNET_SERVICE_run (int argc, char *const *argv, const char *service_name,
 #define HANDLE_ERROR do { GNUNET_break (0); goto shutdown; } while (0)
 
   int err;
+  int ret;
   char *cfg_fn;
   char *loglev;
   char *logfile;
@@ -1731,7 +1751,7 @@ GNUNET_SERVICE_run (int argc, char *const *argv, const char *service_name,
     GNUNET_GETOPT_OPTION_HELP (NULL),
     GNUNET_GETOPT_OPTION_LOGLEVEL (&loglev),
     GNUNET_GETOPT_OPTION_LOGFILE (&logfile),
-    GNUNET_GETOPT_OPTION_VERSION (PACKAGE_VERSION),
+    GNUNET_GETOPT_OPTION_VERSION (PACKAGE_VERSION " " VCS_VERSION),
     GNUNET_GETOPT_OPTION_END
   };
   err = 1;
@@ -1748,14 +1768,29 @@ GNUNET_SERVICE_run (int argc, char *const *argv, const char *service_name,
   sctx.task_cls = task_cls;
   sctx.service_name = service_name;
   sctx.cfg = cfg = GNUNET_CONFIGURATION_create ();
+
   /* setup subsystems */
-  if (GNUNET_SYSERR ==
-      GNUNET_GETOPT_run (service_name, service_options, argc, argv))
+  ret = GNUNET_GETOPT_run (service_name, service_options, argc, argv);
+  if (GNUNET_SYSERR == ret)
     goto shutdown;
+  if (GNUNET_NO == ret)
+  {
+    err = 0;
+    goto shutdown;
+  }
   if (GNUNET_OK != GNUNET_log_setup (service_name, loglev, logfile))
     HANDLE_ERROR;
-  if (GNUNET_OK != GNUNET_CONFIGURATION_load (cfg, cfg_fn))
-    goto shutdown;
+  if (GNUNET_YES ==
+      GNUNET_DISK_file_test (cfg_fn))
+    (void) GNUNET_CONFIGURATION_load (cfg, cfg_fn);
+  else
+  {
+    (void) GNUNET_CONFIGURATION_load (cfg, NULL);
+    if (0 != strcmp (cfg_fn, GNUNET_DEFAULT_USER_CONFIG_FILE))
+      GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
+		  _("Could not access configuration file `%s'\n"),
+		  cfg_fn);
+  }
   if (GNUNET_OK != setup_service (&sctx))
     goto shutdown;
   if ((1 == do_daemonize) && (GNUNET_OK != detach_terminal (&sctx)))
@@ -1791,7 +1826,26 @@ shutdown:
       LOG_STRERROR (GNUNET_ERROR_TYPE_WARNING, "write");
     GNUNET_break (0 == CLOSE (sctx.ready_confirm_fd));
   }
-
+#if HAVE_MALLINFO
+  {
+    char *counter;
+    
+    if ( (GNUNET_YES ==
+	  GNUNET_CONFIGURATION_have_value (sctx.cfg, service_name,
+					   "GAUGER_HEAP")) &&
+	 (GNUNET_OK ==
+	  GNUNET_CONFIGURATION_get_value_string (sctx.cfg, service_name,
+						 "GAUGER_HEAP",
+						 &counter)) )
+    {
+      struct mallinfo mi;
+      
+      mi = mallinfo ();
+      GAUGER (service_name, counter, mi.usmblks, "blocks");
+      GNUNET_free (counter);
+    }     
+  }
+#endif
   GNUNET_SPEEDUP_stop_ ();
   GNUNET_CONFIGURATION_destroy (cfg);
   i = 0;
@@ -1891,6 +1945,26 @@ GNUNET_SERVICE_stop (struct GNUNET_SERVICE_Context *sctx)
 {
   unsigned int i;
 
+#if HAVE_MALLINFO
+  {
+    char *counter;
+    
+    if ( (GNUNET_YES ==
+	  GNUNET_CONFIGURATION_have_value (sctx->cfg, sctx->service_name,
+					   "GAUGER_HEAP")) &&
+	 (GNUNET_OK ==
+	  GNUNET_CONFIGURATION_get_value_string (sctx->cfg, sctx->service_name,
+						 "GAUGER_HEAP",
+						 &counter)) )
+    {
+      struct mallinfo mi;
+      
+      mi = mallinfo ();
+      GAUGER (sctx->service_name, counter, mi.usmblks, "blocks");
+      GNUNET_free (counter);
+    }     
+  }
+#endif
   if (GNUNET_SCHEDULER_NO_TASK != sctx->shutdown_task)
   {
     GNUNET_SCHEDULER_cancel (sctx->shutdown_task);

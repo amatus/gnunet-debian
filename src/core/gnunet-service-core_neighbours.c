@@ -412,6 +412,9 @@ handle_transport_receive (void *cls, const struct GNUNET_PeerIdentity *peer,
   case GNUNET_MESSAGE_TYPE_CORE_ENCRYPTED_MESSAGE:
     GSC_KX_handle_encrypted_message (n->kxinfo, message, atsi, atsi_count);
     break;
+  case GNUNET_MESSAGE_TYPE_DUMMY:
+    /*  Dummy messages for testing / benchmarking, just discard */
+    break;
   default:
     GNUNET_log (GNUNET_ERROR_TYPE_WARNING,
                 _
@@ -461,7 +464,7 @@ GSC_NEIGHBOURS_transmit (const struct GNUNET_PeerIdentity *target,
 int
 GSC_NEIGHBOURS_init ()
 {
-  neighbours = GNUNET_CONTAINER_multihashmap_create (128);
+  neighbours = GNUNET_CONTAINER_multihashmap_create (128, GNUNET_NO);
   transport =
       GNUNET_TRANSPORT_connect (GSC_cfg, &GSC_my_identity, NULL,
                                 &handle_transport_receive,
@@ -486,7 +489,7 @@ GSC_NEIGHBOURS_init ()
  * @return GNUNET_OK (continue to iterate)
  */
 static int
-free_neighbour_helper (void *cls, const GNUNET_HashCode * key, void *value)
+free_neighbour_helper (void *cls, const struct GNUNET_HashCode * key, void *value)
 {
   struct Neighbour *n = value;
 
@@ -503,14 +506,18 @@ free_neighbour_helper (void *cls, const GNUNET_HashCode * key, void *value)
 void
 GSC_NEIGHBOURS_done ()
 {
-  if (NULL == transport)
-    return;
-  GNUNET_TRANSPORT_disconnect (transport);
-  transport = NULL;
-  GNUNET_CONTAINER_multihashmap_iterate (neighbours, &free_neighbour_helper,
-                                         NULL);
-  GNUNET_CONTAINER_multihashmap_destroy (neighbours);
-  neighbours = NULL;
+  if (NULL != transport)
+  {
+    GNUNET_TRANSPORT_disconnect (transport);
+    transport = NULL;
+  }
+  if (NULL != neighbours)
+  {
+    GNUNET_CONTAINER_multihashmap_iterate (neighbours, &free_neighbour_helper,
+					   NULL);
+    GNUNET_CONTAINER_multihashmap_destroy (neighbours);
+    neighbours = NULL;
+  }
 }
 
 /* end of gnunet-service-core_neighbours.c */

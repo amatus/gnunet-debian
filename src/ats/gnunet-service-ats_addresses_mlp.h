@@ -20,7 +20,7 @@
 
 /**
  * @file ats/gnunet-service-ats_addresses_mlp.h
- * @brief ats mlp problem solver
+ * @brief ats MLP problem solver
  * @author Matthias Wachs
  * @author Christian Grothoff
  */
@@ -33,8 +33,6 @@
 
 #ifndef GNUNET_SERVICE_ATS_ADDRESSES_MLP_H
 #define GNUNET_SERVICE_ATS_ADDRESSES_MLP_H
-
-#define DEBUG_MLP GNUNET_EXTRA_LOGGING
 
 #define BIG_M_VALUE (UINT32_MAX) /10
 #define BIG_M_STRING "unlimited"
@@ -64,13 +62,6 @@ struct ATS_Peer
 
   struct ATS_Address *head;
   struct ATS_Address *tail;
-};
-
-struct ATS_PreferedAddress
-{
-  uint32_t bandwidth_out;
-  uint32_t bandwidth_in;
-  struct ATS_Address *address;
 };
 
 struct GAS_MLP_SolutionContext
@@ -105,12 +96,20 @@ struct GAS_MLP_Handle
   /**
    * GLPK LP control parameter
    */
+#if HAVE_LIBGLPK
   glp_smcp control_param_lp;
+#else
+  void *control_param_lp;
+#endif
 
   /**
    * GLPK LP control parameter
    */
+#if HAVE_LIBGLPK
   glp_iocp control_param_mlp;
+#else
+  void *control_param_mlp;
+#endif
 
   /**
    * Solves the task in an regular interval
@@ -317,26 +316,34 @@ struct MLP_information
  *
  * @param cfg configuration handle
  * @param stats the GNUNET_STATISTICS handle
- * @param max_duration maximum numbers of iterations for the LP/MLP Solver
- * @param max_iterations maximum time limit for the LP/MLP Solver
- * @return struct GAS_MLP_Handle * on success, NULL on fail
+ * @param network array of GNUNET_ATS_NetworkType with length dest_length
+ * @param out_dest array of outbound quotas
+ * @param in_dest array of outbound quota
+ * @param dest_length array length for quota arrays
+ * @param bw_changed_cb callback for changed bandwidth amounts
+ * @param bw_changed_cb_cls cls for callback
+ * @return struct GAS_MLP_Handle on success, NULL on fail
  */
-struct GAS_MLP_Handle *
+void *
 GAS_mlp_init (const struct GNUNET_CONFIGURATION_Handle *cfg,
               const struct GNUNET_STATISTICS_Handle *stats,
-              struct GNUNET_TIME_Relative max_duration,
-              unsigned int max_iterations);
+              int *network,
+              unsigned long long *out_dest,
+              unsigned long long *in_dest,
+              int dest_length,
+              GAS_bandwidth_changed_cb bw_changed_cb,
+              void *bw_changed_cb_cls);
+
 
 /**
- * Solves the MLP problem on demand
+ * Add a single address to the solve
  *
- * @param mlp the MLP Handle
- * @param ctx solution context
- * @return GNUNET_OK if could be solved, GNUNET_SYSERR on failure
+ * @param solver the solver Handle
+ * @param addresses the address hashmap containing all addresses
+ * @param address the address to add
  */
-int
-GAS_mlp_solve_problem (struct GAS_MLP_Handle *mlp, struct GAS_MLP_SolutionContext *ctx);
-
+void
+GAS_mlp_address_add (void *solver, struct GNUNET_CONTAINER_MultiHashMap * addresses, struct ATS_Address *address);
 
 /**
  * Updates a single address in the MLP problem
@@ -347,13 +354,22 @@ GAS_mlp_solve_problem (struct GAS_MLP_Handle *mlp, struct GAS_MLP_SolutionContex
  * Otherwise the addresses' values can be updated and the existing base can
  * be reused
  *
- * @param mlp the MLP Handle
- * @param addresses the address hashmap
- *        the address has to be already added from the hashmap
- * @param address the address to update
+ * @param solver the solver Handle
+ * @param addresses the address hashmap containing all addresses
+ * @param address the update address
+ * @param session the new session (if changed otherwise current)
+ * @param in_use the new address in use state (if changed otherwise current)
+ * @param atsi the latest ATS information
+ * @param atsi_count the atsi count
  */
 void
-GAS_mlp_address_update (struct GAS_MLP_Handle *mlp, struct GNUNET_CONTAINER_MultiHashMap * addresses, struct ATS_Address *address);
+GAS_mlp_address_update (void *solver,
+                        struct GNUNET_CONTAINER_MultiHashMap *addresses,
+                        struct ATS_Address *address,
+                        uint32_t session,
+                        int in_use,
+                        const struct GNUNET_ATS_Information *atsi,
+                        uint32_t atsi_count);
 
 
 /**
@@ -361,25 +377,31 @@ GAS_mlp_address_update (struct GAS_MLP_Handle *mlp, struct GNUNET_CONTAINER_Mult
  *
  * The MLP problem has to be recreated and the problem has to be resolved
  *
- * @param mlp the MLP Handle
+ * @param solver the MLP Handle
  * @param addresses the address hashmap
  *        the address has to be already removed from the hashmap
  * @param address the address to delete
+ * @param session_only delete only session not whole address
  */
 void
-GAS_mlp_address_delete (struct GAS_MLP_Handle *mlp, struct GNUNET_CONTAINER_MultiHashMap * addresses, struct ATS_Address *address);
+GAS_mlp_address_delete (void *solver,
+                        struct GNUNET_CONTAINER_MultiHashMap *addresses,
+                        struct ATS_Address *address,
+                        int session_only);
 
 
 /**
  * Changes the preferences for a peer in the MLP problem
  *
- * @param mlp the MLP Handle
+ * @param solver the MLP Handle
+ * @param client client
  * @param peer the peer
  * @param kind the kind to change the preference
  * @param score the score
  */
 void
-GAS_mlp_address_change_preference (struct GAS_MLP_Handle *mlp,
+GAS_mlp_address_change_preference (void *solver,
+                                   void *client,
                                    const struct GNUNET_PeerIdentity *peer,
                                    enum GNUNET_ATS_PreferenceKind kind,
                                    float score);
@@ -388,21 +410,23 @@ GAS_mlp_address_change_preference (struct GAS_MLP_Handle *mlp,
 /**
  * Get the preferred address for a specific peer
  *
- * @param mlp the MLP Handle
+ * @param solver the MLP Handle
  * @param addresses address hashmap
  * @param peer the peer
  * @return suggested address
  */
-struct ATS_PreferedAddress *
-GAS_mlp_get_preferred_address (struct GAS_MLP_Handle *mlp,
+const struct ATS_Address *
+GAS_mlp_get_preferred_address (void *solver,
                                struct GNUNET_CONTAINER_MultiHashMap * addresses,
                                const struct GNUNET_PeerIdentity *peer);
 
 /**
  * Shutdown the MLP problem solving component
+ *
+ * @param solver the solver handle
  */
 void
-GAS_mlp_done ();
+GAS_mlp_done (void *solver);
 
 #endif
 /* end of gnunet-service-ats_addresses_mlp.h */

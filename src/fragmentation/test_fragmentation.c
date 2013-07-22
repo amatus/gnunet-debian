@@ -25,14 +25,12 @@
 #include "platform.h"
 #include "gnunet_fragmentation_lib.h"
 
-#define VERBOSE GNUNET_NO
-
 #define DETAILS GNUNET_NO
 
 /**
  * Number of messages to transmit (note: each uses ~32k memory!)
  */
-#define NUM_MSGS 5000
+#define NUM_MSGS 500
 
 /**
  * MTU to force on fragmentation (must be > 1k + 12)
@@ -42,7 +40,7 @@
 /**
  * Simulate dropping of 1 out of how many messages? (must be > 1)
  */
-#define DROPRATE 10
+#define DROPRATE 5
 
 static int ret = 1;
 
@@ -77,7 +75,7 @@ do_shutdown (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
   {
     if (frags[i] == NULL)
       continue;
-    GNUNET_FRAGMENT_context_destroy (frags[i]);
+    GNUNET_FRAGMENT_context_destroy (frags[i], NULL, NULL);
     frags[i] = NULL;
   }
 }
@@ -134,7 +132,7 @@ proc_acks (void *cls, uint32_t msg_id, const struct GNUNET_MessageHeader *hdr)
 #if DETAILS
       FPRINTF (stderr, "%s",  "@");    /* good ACK */
 #endif
-      GNUNET_FRAGMENT_context_destroy (frags[i]);
+      GNUNET_FRAGMENT_context_destroy (frags[i], NULL, NULL);
       frags[i] = NULL;
       acks++;
       return;
@@ -215,7 +213,9 @@ run (void *cls, char *const *args, const char *cfgfile,
         htons (sizeof (struct GNUNET_MessageHeader) + (17 * i) % (32 * 1024));
     frags[i] = GNUNET_FRAGMENT_context_create (NULL /* no stats */ ,
                                                MTU, &trackers[i],
-                                               GNUNET_TIME_UNIT_SECONDS, msg,
+                                               GNUNET_TIME_UNIT_MILLISECONDS, 
+                                               GNUNET_TIME_UNIT_SECONDS, 
+					       msg,
                                                &proc_frac, &frags[i]);
   }
 }
@@ -232,21 +232,13 @@ main (int argc, char *argv[])
     "-c",
     "test_fragmentation_data.conf",
     "-L",
-#if VERBOSE
-    "DEBUG",
-#else
     "WARNING",
-#endif
     NULL
   };
   unsigned int i;
 
   GNUNET_log_setup ("test-fragmentation",
-#if VERBOSE
-                    "DEBUG",
-#else
                     "WARNING",
-#endif
                     NULL);
   for (i = 0; i < NUM_MSGS; i++)
     GNUNET_BANDWIDTH_tracker_init (&trackers[i],

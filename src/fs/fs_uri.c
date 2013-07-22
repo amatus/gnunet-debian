@@ -98,7 +98,7 @@
  * @param key wherer to store the unique key
  */
 void
-GNUNET_FS_uri_to_key (const struct GNUNET_FS_Uri *uri, GNUNET_HashCode * key)
+GNUNET_FS_uri_to_key (const struct GNUNET_FS_Uri *uri, struct GNUNET_HashCode * key)
 {
   switch (uri->type)
   {
@@ -121,7 +121,7 @@ GNUNET_FS_uri_to_key (const struct GNUNET_FS_Uri *uri, GNUNET_HashCode * key)
                         key);
     break;
   default:
-    memset (key, 0, sizeof (GNUNET_HashCode));
+    memset (key, 0, sizeof (struct GNUNET_HashCode));
     break;
   }
 }
@@ -217,7 +217,8 @@ percent_decode_keyword (const char *in, char **emsg)
       if (1 != SSCANF (&out[rpos + 1], "%2X", &hx))
       {
         GNUNET_free (out);
-        *emsg = GNUNET_strdup (_("`%' must be followed by HEX number"));
+        *emsg = GNUNET_strdup (_(/* xgettext:no-c-format */
+				 "`%' must be followed by HEX number"));
         return NULL;
       }
       rpos += 3;
@@ -355,7 +356,7 @@ static struct GNUNET_FS_Uri *
 uri_sks_parse (const char *s, char **emsg)
 {
   struct GNUNET_FS_Uri *ret;
-  GNUNET_HashCode namespace;
+  struct GNUNET_HashCode ns;
   char *identifier;
   unsigned int pos;
   size_t slen;
@@ -374,7 +375,7 @@ uri_sks_parse (const char *s, char **emsg)
   }
   memcpy (enc, &s[pos], sizeof (struct GNUNET_CRYPTO_HashAsciiEncoded));
   enc[sizeof (struct GNUNET_CRYPTO_HashAsciiEncoded) - 1] = '\0';
-  if (GNUNET_OK != GNUNET_CRYPTO_hash_from_string (enc, &namespace))
+  if (GNUNET_OK != GNUNET_CRYPTO_hash_from_string (enc, &ns))
   {
     *emsg = GNUNET_strdup (_("Malformed SKS URI"));
     return NULL;
@@ -383,7 +384,7 @@ uri_sks_parse (const char *s, char **emsg)
       GNUNET_strdup (&s[pos + sizeof (struct GNUNET_CRYPTO_HashAsciiEncoded)]);
   ret = GNUNET_malloc (sizeof (struct GNUNET_FS_Uri));
   ret->type = sks;
-  ret->data.sks.namespace = namespace;
+  ret->data.sks.ns = ns;
   ret->data.sks.identifier = identifier;
   return ret;
 }
@@ -903,8 +904,7 @@ GNUNET_FS_uri_loc_create (const struct GNUNET_FS_Uri *baseUri,
                 _("Lacking key configuration settings.\n"));
     return NULL;
   }
-  my_private_key = GNUNET_CRYPTO_rsa_key_create_from_file (keyfile);
-  if (my_private_key == NULL)
+  if (NULL == (my_private_key = GNUNET_CRYPTO_rsa_key_create_from_file (keyfile)))
   {
     GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
                 _("Could not access hostkey file `%s'.\n"), keyfile);
@@ -949,7 +949,7 @@ GNUNET_FS_uri_sks_create (struct GNUNET_FS_Namespace *ns, const char *id,
   ns_uri = GNUNET_malloc (sizeof (struct GNUNET_FS_Uri));
   ns_uri->type = sks;
   GNUNET_CRYPTO_rsa_key_get_public (ns->key, &pk);
-  GNUNET_CRYPTO_hash (&pk, sizeof (pk), &ns_uri->data.sks.namespace);
+  GNUNET_CRYPTO_hash (&pk, sizeof (pk), &ns_uri->data.sks.ns);
   ns_uri->data.sks.identifier = GNUNET_strdup (id);
   return ns_uri;
 }
@@ -963,13 +963,13 @@ GNUNET_FS_uri_sks_create (struct GNUNET_FS_Namespace *ns, const char *id,
  * @return an FS URI for the given namespace and identifier
  */
 struct GNUNET_FS_Uri *
-GNUNET_FS_uri_sks_create_from_nsid (GNUNET_HashCode * nsid, const char *id)
+GNUNET_FS_uri_sks_create_from_nsid (struct GNUNET_HashCode * nsid, const char *id)
 {
   struct GNUNET_FS_Uri *ns_uri;
 
   ns_uri = GNUNET_malloc (sizeof (struct GNUNET_FS_Uri));
   ns_uri->type = sks;
-  ns_uri->data.sks.namespace = *nsid;
+  ns_uri->data.sks.ns = *nsid;
   ns_uri->data.sks.identifier = GNUNET_strdup (id);
   return ns_uri;
 }
@@ -1272,8 +1272,8 @@ GNUNET_FS_uri_test_equal (const struct GNUNET_FS_Uri *u1,
     return GNUNET_NO;
   case sks:
     if ((0 ==
-         memcmp (&u1->data.sks.namespace, &u2->data.sks.namespace,
-                 sizeof (GNUNET_HashCode))) &&
+         memcmp (&u1->data.sks.ns, &u2->data.sks.ns,
+                 sizeof (struct GNUNET_HashCode))) &&
         (0 == strcmp (u1->data.sks.identifier, u2->data.sks.identifier)))
 
       return GNUNET_YES;
@@ -1334,14 +1334,14 @@ GNUNET_FS_uri_test_sks (const struct GNUNET_FS_Uri *uri)
  */
 int
 GNUNET_FS_uri_sks_get_namespace (const struct GNUNET_FS_Uri *uri,
-                                 GNUNET_HashCode * nsid)
+                                 struct GNUNET_HashCode * nsid)
 {
   if (!GNUNET_FS_uri_test_sks (uri))
   {
     GNUNET_break (0);
     return GNUNET_SYSERR;
   }
-  *nsid = uri->data.sks.namespace;
+  *nsid = uri->data.sks.ns;
   return GNUNET_OK;
 }
 
@@ -1382,9 +1382,9 @@ GNUNET_FS_uri_sks_to_string_fancy (struct GNUNET_CONFIGURATION_Handle *cfg,
 
   if (uri->type != sks)
     return NULL;
-  (void) GNUNET_PSEUDONYM_get_info (cfg, &uri->data.sks.namespace,
+  (void) GNUNET_PSEUDONYM_get_info (cfg, &uri->data.sks.ns,
 				    NULL, NULL, &name, NULL);
-  unique_name = GNUNET_PSEUDONYM_name_uniquify (cfg, &uri->data.sks.namespace, name, NULL);
+  unique_name = GNUNET_PSEUDONYM_name_uniquify (cfg, &uri->data.sks.ns, name, NULL);
   GNUNET_free (name);
   GNUNET_asprintf (&ret, "%s: %s", unique_name, uri->data.sks.identifier);
   GNUNET_free (unique_name);
@@ -1665,7 +1665,7 @@ get_keywords_from_parens (const char *s, char **array, int index)
 /**
  * Where to break up keywords
  */
-#define TOKENS "_. /-!?#&+@\"\'\\;:,"
+#define TOKENS "_. /-!?#&+@\"\'\\;:,()[]{}$<>|"
 
 /**
  * Break the filename up by TOKENS to make
@@ -1907,7 +1907,7 @@ uri_ksk_to_string (const struct GNUNET_FS_Uri *uri)
         continue;               /* skip leading space */
       if (needs_percent (keyword[j]))
       {
-        sprintf (&ret[wpos], "%%%02X", keyword[j]);
+        sprintf (&ret[wpos], "%%%02X", (unsigned char) keyword[j]);
         wpos += 3;
       }
       else
@@ -1931,18 +1931,18 @@ uri_ksk_to_string (const struct GNUNET_FS_Uri *uri)
 static char *
 uri_sks_to_string (const struct GNUNET_FS_Uri *uri)
 {
-  const GNUNET_HashCode *namespace;
+  const struct GNUNET_HashCode *ns;
   const char *identifier;
   char *ret;
-  struct GNUNET_CRYPTO_HashAsciiEncoded ns;
+  struct GNUNET_CRYPTO_HashAsciiEncoded nsasc;
 
   if (uri->type != sks)
     return NULL;
-  namespace = &uri->data.sks.namespace;
+  ns = &uri->data.sks.ns;
   identifier = uri->data.sks.identifier;
-  GNUNET_CRYPTO_hash_to_enc (namespace, &ns);
+  GNUNET_CRYPTO_hash_to_enc (ns, &nsasc);
   GNUNET_asprintf (&ret, "%s%s%s/%s", GNUNET_FS_URI_PREFIX,
-                   GNUNET_FS_URI_SKS_INFIX, (const char *) &ns, identifier);
+                   GNUNET_FS_URI_SKS_INFIX, (const char *) &nsasc, identifier);
   return ret;
 }
 

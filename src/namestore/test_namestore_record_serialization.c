@@ -26,11 +26,10 @@
 #include "gnunet_namestore_service.h"
 #include "namestore.h"
 
-#define VERBOSE GNUNET_NO
-
-#define TIMEOUT GNUNET_TIME_relative_multiply (GNUNET_TIME_UNIT_SECONDS, 10)
+#define TIMEOUT GNUNET_TIME_relative_multiply (GNUNET_TIME_UNIT_SECONDS, 100)
 
 static int res;
+
 
 static void
 run (void *cls, char *const *args, const char *cfgfile,
@@ -78,7 +77,7 @@ run (void *cls, char *const *args, const char *cfgfile,
       GNUNET_break (0);
       res = 1;
     }
-    if (0 != GNUNET_TIME_absolute_get_difference(src[c].expiration, dst[c].expiration).rel_value)
+    if (src[c].expiration_time != dst[c].expiration_time)
     {
       GNUNET_break (0);
       res = 1;
@@ -128,9 +127,6 @@ check ()
   static char *const argv[] = { "test_namestore_record_serialization",
     "-c",
     "test_namestore_api.conf",
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
     NULL
   };
   static struct GNUNET_GETOPT_CommandLineOption options[] = {

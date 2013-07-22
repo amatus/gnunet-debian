@@ -36,7 +36,7 @@
 #define LOG_STRERROR(kind,syscall) GNUNET_log_from_strerror (kind, "util-scheduler", syscall)
 
 
-#ifdef LINUX
+#if HAVE_EXECINFO_H
 #include "execinfo.h"
 
 /**
@@ -565,22 +565,17 @@ run_ready (struct GNUNET_NETWORK_FDSet *rs, struct GNUNET_NETWORK_FDSet *ws)
     GNUNET_assert (pos != NULL);        /* ready_count wrong? */
     ready[p] = pos->next;
     ready_count--;
-    if (current_priority != pos->priority)
-    {
-      current_priority = pos->priority;
-      (void) GNUNET_OS_set_process_priority (GNUNET_OS_process_current (),
-                                             pos->priority);
-    }
+    current_priority = pos->priority;
     current_lifeness = pos->lifeness;
     active_task = pos;
 #if PROFILE_DELAYS
     if (GNUNET_TIME_absolute_get_duration (pos->start_time).rel_value >
         DELAY_THRESHOLD.rel_value)
     {
-      LOG (GNUNET_ERROR_TYPE_ERROR, "Task %llu took %llums to be scheduled\n",
-           pos->id,
-           (unsigned long long)
-           GNUNET_TIME_absolute_get_duration (pos->start_time).rel_value);
+      LOG (GNUNET_ERROR_TYPE_DEBUG, 
+	   "Task %llu took %s to be scheduled\n",
+           (unsigned long long) pos->id,
+           GNUNET_STRINGS_relative_time_to_string (GNUNET_TIME_absolute_get_duration (pos->start_time), GNUNET_YES));
     }
 #endif
     tc.reason = pos->reason;
@@ -727,6 +722,7 @@ GNUNET_SCHEDULER_run (GNUNET_SCHEDULER_Task task, void *task_cls)
                                 GNUNET_DISK_PIPE_END_READ);
   GNUNET_assert (pr != NULL);
   my_pid = getpid ();
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Registering signal handlers\n");
   shc_int = GNUNET_SIGNAL_handler_install (SIGINT, &sighandler_shutdown);
   shc_term = GNUNET_SIGNAL_handler_install (SIGTERM, &sighandler_shutdown);
 #ifndef MINGW

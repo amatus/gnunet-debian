@@ -3,7 +3,6 @@ AUTOSTART = YES
 @UNIXONLY@ PORT = 2098
 HOSTNAME = localhost
 HOME = $SERVICEHOME
-CONFIG = $DEFAULTCONFIG
 BINARY = gnunet-service-ats
 ACCEPT_FROM = 127.0.0.1;
 ACCEPT_FROM6 = ::1;
@@ -11,9 +10,12 @@ UNIXPATH = /tmp/gnunet-service-ats.sock
 UNIX_MATCH_UID = YES
 UNIX_MATCH_GID = YES
 
-# Enable MLP mode (default: NO)
-MLP = NO
+# Designated assigment mode: simplistic / MLP
+MODE = simplistic 
+
 # Network specific inbound/outbound quotas
+UNSPECIFIED_QUOTA_IN = 64 KiB
+UNSPECIFIED_QUOTA_OUT = 64 KiB
 # LOOPBACK
 LOOPBACK_QUOTA_IN = unlimited
 LOOPBACK_QUOTA_OUT = unlimited
@@ -27,6 +29,13 @@ WAN_QUOTA_OUT = 64 KiB
 WLAN_QUOTA_IN = 1 MiB
 WLAN_QUOTA_OUT = 1 MiB
 # ATS options
+
+
+# MLP specific settings
+# MAX_DURATION = 3 s
+# MAX_ITERATIONS = 1024 
+
+
 
 DUMP_MLP = NO
 DUMP_SOLUTION = NO

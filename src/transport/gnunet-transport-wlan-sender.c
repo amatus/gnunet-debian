@@ -101,50 +101,59 @@ main (int argc, char *argv[])
   unsigned int temp[6];
   struct GNUNET_TRANSPORT_WLAN_MacAddress inmac;
   struct GNUNET_TRANSPORT_WLAN_MacAddress outmac;
-  int pos;
-  long long count;
+  struct GNUNET_TRANSPORT_WLAN_HelperControlMessage hcm;
+  unsigned long long count;
   double bytes_per_s;
   time_t start;
   time_t akt;
   int i;
+  ssize_t ret;
+  pid_t pid;
+  int commpipe[2];              /* This holds the fd for the input & output of the pipe */
+  int macpipe[2];              /* This holds the fd for the input & output of the pipe */
 
   if (4 != argc)
   {
     fprintf (stderr,
              "This program must be started with the interface and the targets and source mac as argument.\n");
     fprintf (stderr,
-             "Usage: interface-name mac-target mac-source\n"
+             "Usage: interface-name mac-DST mac-SRC\n"
              "e.g. mon0 11-22-33-44-55-66 12-34-56-78-90-ab\n");
     return 1;
   }
   if (6 !=
-      SSCANF (argv[3], "%x-%x-%x-%x-%x-%x", &temp[0], &temp[1], &temp[2],
+      SSCANF (argv[2], "%x-%x-%x-%x-%x-%x", &temp[0], &temp[1], &temp[2],
               &temp[3], &temp[4], &temp[5]))
   {
     fprintf (stderr,
-             "Usage: interface-name mac-target mac-source\n"
+             "Usage: interface-name mac-DST mac-SRC\n"
              "e.g. mon0 11-22-33-44-55-66 12-34-56-78-90-ab\n");
     return 1;
   }
   for (i = 0; i < 6; i++)
     outmac.mac[i] = temp[i];
   if (6 !=
-      SSCANF (argv[2], "%x-%x-%x-%x-%x-%x", &temp[0], &temp[1], &temp[2],
+      SSCANF (argv[3], "%x-%x-%x-%x-%x-%x", &temp[0], &temp[1], &temp[2],
               &temp[3], &temp[4], &temp[5]))
   {
     fprintf (stderr,
-             "Usage: interface-name mac-target mac-source\n"
+             "Usage: interface-name mac-DST mac-SRC\n"
              "e.g. mon0 11-22-33-44-55-66 12-34-56-78-90-ab\n");
     return 1;
   }
   for (i = 0; i < 6; i++)
     inmac.mac[i] = temp[i];
 
-  pid_t pid;
-  int commpipe[2];              /* This holds the fd for the input & output of the pipe */
 
   /* Setup communication pipeline first */
   if (pipe (commpipe))
+  {
+    fprintf (stderr, 
+	     "Failed to create pipe: %s\n",
+	     STRERROR (errno));
+    exit (1);
+  }
+  if (pipe (macpipe))
   {
     fprintf (stderr, 
 	     "Failed to create pipe: %s\n",
@@ -159,49 +168,66 @@ main (int argc, char *argv[])
 	     STRERROR (errno));    
     exit (1);
   }
-
+  memset (msg_buf, 0x42, sizeof (msg_buf));
   if (pid)
   {
     /* A positive (non-negative) PID indicates the parent process */
-    close (commpipe[0]);        /* Close unused side of pipe (in side) */
+    if (0 != close (commpipe[0]))        /* Close unused side of pipe (in side) */
+      fprintf (stderr,
+	       "Failed to close fd: %s\n",
+	       strerror (errno));
     setvbuf (stdout, (char *) NULL, _IONBF, 0); /* Set non-buffered output on stdout */
 
-
+    if (0 != close (macpipe[1]))
+      fprintf (stderr,
+	       "Failed to close fd: %s\n",
+	       strerror (errno));
+    if (sizeof (hcm) != read (macpipe[0], &hcm, sizeof (hcm)))
+      fprintf (stderr, 
+	       "Failed to read hcm...\n");
+    fprintf (stderr,
+	     "Got MAC %.2X:%.2X:%.2X:%.2X:%.2X:%.2X\n", 
+	     hcm.mac.mac[0], hcm.mac.mac[1],
+	     hcm.mac.mac[2], hcm.mac.mac[3], hcm.mac.mac[4], hcm.mac.mac[5]);				  
     radiotap = (struct GNUNET_TRANSPORT_WLAN_RadiotapSendMessage *) msg_buf;
     getRadiotapHeader (radiotap, WLAN_MTU);
-    pos = 0;
     getWlanHeader (&radiotap->frame, &outmac, &inmac,
                    WLAN_MTU);
     start = time (NULL);
     count = 0;
     while (1)
     {
-      pos += write (commpipe[1], msg_buf, WLAN_MTU - pos);
-      if (pos % WLAN_MTU == 0)
+      ret = write (commpipe[1], msg_buf, WLAN_MTU);
+      if (0 > ret)
       {
-        pos = 0;
-        count++;
-
-        if (count % 1000 == 0)
-        {
-          akt = time (NULL);
-          bytes_per_s = count * WLAN_MTU / (akt - start);
-          bytes_per_s /= 1024;
-          printf ("send %f kbytes/s\n", bytes_per_s);
-        }
+	fprintf (stderr, "write failed: %s\n", strerror (errno));
+	break;
       }
-
+      count += ret;
+      akt =  time (NULL);
+      if (akt - start > 30)
+      {
+	bytes_per_s = count / (akt - start);
+	bytes_per_s /= 1024;
+	printf ("send %f kbytes/s\n", bytes_per_s);
+	start = akt;
+	count = 0;
+      }     
     }
   }
   else
   {
     /* A zero PID indicates that this is the child process */
     (void) close (0);
+    (void) close (1);
     if (-1 == dup2 (commpipe[0], 0))    /* Replace stdin with the in side of the pipe */
       fprintf (stderr, "dup2 failed: %s\n", strerror (errno));
+    if (-1 == dup2 (macpipe[1], 1))    /* Replace stdout with the out side of the pipe */
+      fprintf (stderr, "dup2 failed: %s\n", strerror (errno));
     (void) close (commpipe[1]); /* Close unused side of pipe (out side) */
+    (void) close (macpipe[0]); /* Close unused side of pipe (in side) */
     /* Replace the child fork with a new process */
-    if (execl
+    if (execlp
         ("gnunet-helper-transport-wlan", "gnunet-helper-transport-wlan",
          argv[1], NULL) == -1)
     {

@@ -483,6 +483,16 @@ extern "C"
  */
 #define GNUNET_MESSAGE_TYPE_FS_MIGRATION_STOP 139
 
+/**
+ * P2P request for content (one FS to another via a stream).
+ */
+#define GNUNET_MESSAGE_TYPE_FS_STREAM_QUERY 140
+
+/**
+ * P2P answer for content (one FS to another via a stream).
+ */
+#define GNUNET_MESSAGE_TYPE_FS_STREAM_REPLY 141
+
 
 /*******************************************************************************
  * DHT message types
@@ -557,6 +567,11 @@ extern "C"
  * Acknowledge receiving PUT request
  */
 #define GNUNET_MESSAGE_TYPE_DHT_CLIENT_PUT_OK             155
+
+/**
+ * Certain results are already known to the client, filter those.
+ */
+#define GNUNET_MESSAGE_TYPE_DHT_CLIENT_GET_RESULTS_KNOWN             156
 
 
 /*******************************************************************************
@@ -791,9 +806,14 @@ extern "C"
 #define GNUNET_MESSAGE_TYPE_MESH_TUNNEL_DESTROY         266
 
 /**
- * We need flow control
+ * ACK for a data packet.
  */
-#define GNUNET_MESSAGE_TYPE_MESH_SPEED_NOTIFY           270
+#define GNUNET_MESSAGE_TYPE_MESH_ACK                    267
+
+/**
+ * Poll for an ACK.
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_POLL                   268
 
 /**
  * Connect to the mesh service, specifying subscriptions
@@ -826,9 +846,64 @@ extern "C"
 #define GNUNET_MESSAGE_TYPE_MESH_LOCAL_PEER_ADD_BY_TYPE 277
 
 /**
+ * Ask the mesh service to add a peer described by a service string
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_ANNOUNCE_REGEX   278
+
+/**
+ * Ask the mesh service to add a peer described by a service string
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_PEER_ADD_BY_STRING 279
+
+/**
+ * Ask the mesh service to add a peer to the blacklist of an existing tunnel
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_PEER_BLACKLIST   280
+
+/**
+ * Ask the mesh service to remove a peer from the blacklist of a tunnel
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_PEER_UNBLACKLIST 281
+
+/**
+ * Set tunnel speed to slowest peer
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_TUNNEL_MIN       282
+
+/**
+ * Set tunnel speed to fastest peer
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_TUNNEL_MAX       283
+
+/**
+ * Set tunnel buffering on.
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_TUNNEL_BUFFER    284
+
+/**
+ * Set tunnel buffering off.
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_TUNNEL_NOBUFFER  285
+
+/**
+ * Local ACK for data.
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_ACK              286
+
+/**
+ * Local information about all tunnels of service.
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_INFO_TUNNELS     287
+
+/**
+ * Local information of service about a specific tunnel.
+ */
+#define GNUNET_MESSAGE_TYPE_MESH_LOCAL_INFO_TUNNEL      288
+
+/**
  * 640kb should be enough for everybody
  */
-#define GNUNET_MESSAGE_TYPE_MESH_RESERVE_END            288
+#define GNUNET_MESSAGE_TYPE_MESH_RESERVE_END            299
 
 
 
@@ -1034,6 +1109,23 @@ extern "C"
  */
 #define GNUNET_MESSAGE_TYPE_ATS_RESET_BACKOFF 352
 
+/**
+ * Type of the 'struct AddressUpdateMessage' sent by client to ATS
+ * to add a new address
+ */
+#define GNUNET_MESSAGE_TYPE_ATS_ADDRESS_ADD 353
+
+/**
+ * Type of the 'struct AddressListRequestMessage' sent by client to ATS
+ * to request information about addresses
+ */
+#define GNUNET_MESSAGE_TYPE_ATS_ADDRESSLIST_REQUEST 354
+
+/**
+ * Type of the 'struct AddressListResponseMessage' sent by ATS to client
+ * with information about addresses
+ */
+#define GNUNET_MESSAGE_TYPE_ATS_ADDRESSLIST_RESPONSE 355
 
 /*******************************************************************************
  * TRANSPORT message types
@@ -1176,8 +1268,13 @@ extern "C"
  */
 #define GNUNET_MESSAGE_TYPE_TRANSPORT_BROADCAST_BEACON 384
 
+/**
+ * Message containing traffic metrics for transport service
+ */
+#define GNUNET_MESSAGE_TYPE_TRANSPORT_TRAFFIC_METRIC 385
+
 /*******************************************************************************
- * STREAM LIRBRARY MESSAGES
+ * STREAM messages types
  ******************************************************************************/
 
 /**
@@ -1276,14 +1373,86 @@ extern "C"
  */
 #define GNUNET_MESSAGE_TYPE_FS_PUBLISH_HELPER_FINISHED 426
 
+
 /*******************************************************************************
  * NAMESTORE message types
  ******************************************************************************/
 
 /**
- * Request update and listing of a peer.
+ * Client to service: register.
  */
 #define GNUNET_MESSAGE_TYPE_NAMESTORE_START 430
+
+/**
+ * Client to service: lookup name
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_LOOKUP_NAME 431
+
+/**
+ * Service to client: result of name lookup
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_LOOKUP_NAME_RESPONSE 432
+
+/**
+ * Client to service: put records (for caching)
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_PUT 433
+
+/**
+ * Service to client: result of put operation.
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_PUT_RESPONSE 434
+
+/**
+ * Client to service: create record as authority
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_CREATE 435
+
+/**
+ * Service to client: result of record creation request
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_CREATE_RESPONSE 436
+
+/**
+ * Client to service: remove record(s)
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_REMOVE 437
+
+/**
+ * Service to client: result of removal request.
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_RECORD_REMOVE_RESPONSE 438
+
+/**
+ * Client to service: "reverse" lookup for zone name based on zone key
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_TO_NAME 439
+
+/**
+ * Service to client: result of zone-to-name lookup.
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_TO_NAME_RESPONSE 440
+
+/**
+ * Client to service: please start iteration
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_ITERATION_START 445
+
+/**
+ * Service to client: current record in iteration (or end of list).
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_ITERATION_RESPONSE 446
+
+/**
+ * Client to service: next record in iteration please.
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_ITERATION_NEXT 447
+
+/**
+ * Client to service: stop iterating.
+ */
+#define GNUNET_MESSAGE_TYPE_NAMESTORE_ZONE_ITERATION_STOP 448
+
 
 /*******************************************************************************
  * LOCKMANAGER message types
@@ -1292,21 +1461,238 @@ extern "C"
 /**
  * Message to acquire Lock
  */
-#define GNUNET_MESSAGE_TYPE_LOCKMANAGER_ACQUIRE 440
+#define GNUNET_MESSAGE_TYPE_LOCKMANAGER_ACQUIRE 450
 
 /**
  * Message to release lock
  */
-#define GNUNET_MESSAGE_TYPE_LOCKMANAGER_RELEASE 441
+#define GNUNET_MESSAGE_TYPE_LOCKMANAGER_RELEASE 451
 
 /**
  * SUCESS reply from lockmanager
  */
-#define GNUNET_MESSAGE_TYPE_LOCKMANAGER_SUCCESS 442
+#define GNUNET_MESSAGE_TYPE_LOCKMANAGER_SUCCESS 452
+
+/*******************************************************************************
+ * TESTBED message types
+ ******************************************************************************/
 
 /**
- *  Next available: 450
+ * Initial message from a client to a testing control service
  */
+#define GNUNET_MESSAGE_TYPE_TESTBED_INIT 460
+
+/**
+ * Message to add host
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_ADD_HOST 461
+
+/**
+ * Message to signal that a add host succeeded
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_ADD_HOST_SUCCESS 462
+
+/**
+ * Message to configure a service to be shared among peers
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_SHARE_SERVICE 463
+
+/**
+ * Message to link delegated controller to slave controller
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_LINK_CONTROLLERS 464
+
+/**
+ * Message to create a peer at a host
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_CREATE_PEER 465
+
+/**
+ * Message to reconfigure a peer
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_RECONFIGURE_PEER 466
+
+/**
+ * Message to start a peer at a host
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_START_PEER 467
+
+/**
+ * Message to stop a peer at a host
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_STOP_PEER 468
+
+/**
+ * Message to destroy a peer
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_DESTROY_PEER 469
+
+/**
+ * Configure underlay link message
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_CONFIGURE_UNDERLAY_LINK 470
+
+/**
+ * Message to connect peers in a overlay
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_OVERLAY_CONNECT 471
+
+/**
+ * Message for peer events
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_PEER_EVENT 472
+
+/**
+ * Message for peer connect events
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_PEER_CONNECT_EVENT 473
+
+/**
+ * Message for operation events
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_OPERATION_FAIL_EVENT 474
+
+/**
+ * Message to signal successful peer creation
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_CREATE_PEER_SUCCESS 475
+
+/**
+ * Message to signal a generic operation has been successful
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_GENERIC_OPERATION_SUCCESS 476
+
+/**
+ * Message to get the configuration of a peer
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_GET_PEER_CONFIGURATION 477
+
+/**
+ * Message containing the peer configuration
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_PEER_CONFIGURATION 478
+
+/**
+ * Message to request a controller to make one of its peer to connect to another
+ * peer using the contained HELLO
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_REMOTE_OVERLAY_CONNECT 479
+
+/**
+ * Message to request configuration of a slave controller
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_GET_SLAVE_CONFIGURATION 480
+
+/**
+ * Message which contains the configuration of slave controller
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_SLAVE_CONFIGURATION 481
+
+/**
+ * Not really a message, but for careful checks on the testbed messages; Should
+ * always be the maximum and never be used to send messages with this type
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_MAX 482
+
+/**
+ * The initialization message towards gnunet-testbed-helper
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_HELPER_INIT 495
+
+/**
+ * The reply message from gnunet-testbed-helper
+ */
+#define GNUNET_MESSAGE_TYPE_TESTBED_HELPER_REPLY 496
+
+
+/**
+ * GNS. FIXME: document!
+ */
+#define GNUNET_MESSAGE_TYPE_GNS_LOOKUP 500
+
+#define GNUNET_MESSAGE_TYPE_GNS_LOOKUP_RESULT 501
+
+#define GNUNET_MESSAGE_TYPE_GNS_SHORTEN 502
+
+#define GNUNET_MESSAGE_TYPE_GNS_SHORTEN_RESULT 503
+
+#define GNUNET_MESSAGE_TYPE_GNS_GET_AUTH 504
+
+#define GNUNET_MESSAGE_TYPE_GNS_GET_AUTH_RESULT 505
+
+
+/*******************************************************************************
+ * CONSENSUS message types
+ ******************************************************************************/
+
+/**
+ * Join a consensus session. Sent by client to service as first message.
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_CLIENT_JOIN 520
+
+/**
+ * Insert an element. Sent by client to service.
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_CLIENT_INSERT 521
+
+/**
+ * Begin accepting new elements from other participants.
+ * Sent by client to service.
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_CLIENT_BEGIN 522
+
+/**
+ * Sent by service when a new element is added.
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_CLIENT_RECEIVED_ELEMENT 523
+
+/**
+ * Sent by client to service in order to start the consensus conclusion.
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_CLIENT_CONCLUDE 524
+
+/**
+ * Sent by service to client in order to signal a completed consensus conclusion.
+ * Last message sent in a consensus session.
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_CLIENT_CONCLUDE_DONE 525
+
+
+/* message types 526-539 reserved for consensus client/service messages */
+
+
+
+/**
+ * Sent by client to service, telling whether a received element should
+ * be accepted and propagated further or not.
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_CLIENT_ACK 540
+
+/**
+ * Strata estimator.
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_P2P_DELTA_ESTIMATE 541
+
+/**
+ * IBF containing all elements of a peer.
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_P2P_DIFFERENCE_DIGEST 542
+
+/**
+ * Elements, and requests for further elements
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_P2P_ELEMENTS 543
+
+/*
+ * Initialization message for consensus p2p communication.
+ */
+#define GNUNET_MESSAGE_TYPE_CONSENSUS_P2P_HELLO 544
+
+
+/**
+ *  Next available: 570
+ */
+
 
 /*******************************************************************************
  * TODO: we need a way to register message types centrally (via some webpage).

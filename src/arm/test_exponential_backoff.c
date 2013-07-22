@@ -28,8 +28,6 @@
 #include "gnunet_program_lib.h"
 #include "gnunet_protocols.h"
 
-#define VERBOSE GNUNET_NO
-
 #define START_ARM GNUNET_YES
 
 #define LOG_BACKOFF GNUNET_NO
@@ -115,9 +113,7 @@ service_shutdown_handler (void *cls, const struct GNUNET_MessageHeader *msg)
 
   if (msg == NULL) 
   {
-#if VERBOSE
     GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Service shutdown complete.\n");
-#endif
     if (shutdown_ctx->cont != NULL)
       shutdown_ctx->cont (shutdown_ctx->cont_cls, GNUNET_NO);
     
@@ -131,10 +127,8 @@ service_shutdown_handler (void *cls, const struct GNUNET_MessageHeader *msg)
   switch (ntohs (msg->type))
   {
   case GNUNET_MESSAGE_TYPE_ARM_SHUTDOWN:
-#if VERBOSE
     GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
 		"Received confirmation for service shutdown.\n");
-#endif
     shutdown_ctx->confirmed = GNUNET_YES;
     GNUNET_CLIENT_receive (shutdown_ctx->sock,
 			   &service_shutdown_handler, shutdown_ctx,
@@ -270,7 +264,7 @@ static void
 arm_notify (void *cls, enum GNUNET_ARM_ProcessStatus status)
 {
   GNUNET_assert (status == GNUNET_ARM_PROCESS_STARTING);
-  GNUNET_ARM_start_service (arm, "do-nothing", TIMEOUT, &do_nothing_notify,
+  GNUNET_ARM_start_service (arm, "do-nothing", GNUNET_OS_INHERIT_STD_OUT_AND_ERR, TIMEOUT, &do_nothing_notify,
 			    NULL);
 }
 
@@ -361,11 +355,24 @@ static void
 task (void *cls, char *const *args, const char *cfgfile,
       const struct GNUNET_CONFIGURATION_Handle *c)
 {
+  char *armconfig;
   cfg = c;
+  if (NULL != cfgfile)
+  {
+    if (GNUNET_OK !=
+        GNUNET_CONFIGURATION_get_value_filename (cfg, "arm", "CONFIG",
+					       &armconfig))
+    {
+      GNUNET_CONFIGURATION_set_value_string (cfg, "arm", "CONFIG",
+                                             cfgfile);
+    }
+    else
+      GNUNET_free (armconfig);
+  }
 
   arm = GNUNET_ARM_connect (cfg, NULL);
 #if START_ARM
-  GNUNET_ARM_start_service (arm, "arm", GNUNET_TIME_UNIT_ZERO, &arm_notify,
+  GNUNET_ARM_start_service (arm, "arm", GNUNET_OS_INHERIT_STD_OUT_AND_ERR, GNUNET_TIME_UNIT_ZERO, &arm_notify,
 			    NULL);
 #else
   arm_do_nothing (NULL, GNUNET_YES);
@@ -379,9 +386,6 @@ check ()
   char *const argv[] = {
     "test-exponential-backoff",
     "-c", "test_arm_api_data.conf",
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
     NULL
   };
   struct GNUNET_GETOPT_CommandLineOption options[] = {
@@ -431,11 +435,7 @@ main (int argc, char *argv[])
   int ret;
 
   GNUNET_log_setup ("test-exponential-backoff",
-#if VERBOSE
-		    "DEBUG",
-#else
 		    "WARNING",
-#endif
 		    NULL);
 
   init ();

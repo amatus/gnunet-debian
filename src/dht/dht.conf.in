@@ -3,7 +3,6 @@ AUTOSTART = YES
 @JAVAPORT@PORT = 2095
 HOSTNAME = localhost
 HOME = $SERVICEHOME
-CONFIG = $DEFAULTCONFIG
 BINARY = gnunet-service-dht
 ACCEPT_FROM = 127.0.0.1;
 ACCEPT_FROM6 = ::1;
@@ -13,7 +12,6 @@ UNIXPATH = /tmp/gnunet-service-dht.sock
 UNIX_MATCH_UID = YES
 UNIX_MATCH_GID = YES
 # DISABLE_SOCKET_FORWARDING = NO
-# DEBUG = YES
 # USERNAME = 
 # MAXBUF =
 # TIMEOUT =
@@ -22,18 +20,15 @@ UNIX_MATCH_GID = YES
 # REJECT_FROM =
 # REJECT_FROM6 =
 # PREFIX =
-# DO_FIND_PEER =
-# STRICT_KADEMLIA =
-# USE_MAX_HOPS =
-# MAX_HOPS =
-# REPUBLISH = YES
-# REPLICATION_FREQUENCY = 60 
-# STOP_ON_CLOSEST =
-# STOP_FOUND =
-# CONVERGE_MODIFIER =
+
+
+# Special option to disable DHT calling 'try_connect' (for testing)
+DISABLE_TRY_CONNECT = NO
 
 
 [dhtcache]
-DATABASE = sqlite
-QUOTA = 1 MB
+DATABASE = heap
+QUOTA = 50 MB
 
+# Disable RC-file for Bloom filter?  (for benchmarking with limited IO availability)
+DISABLE_BF_RC = NO

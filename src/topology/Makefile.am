@@ -6,11 +6,13 @@ endif
 
 pkgcfgdir= $(pkgdatadir)/config.d/
 
+libexecdir= $(pkglibdir)/libexec/
+
 dist_pkgcfg_DATA = \
   topology.conf
 
 
-bin_PROGRAMS = \
+libexec_PROGRAMS = \
  gnunet-daemon-topology
 
 gnunet_daemon_topology_SOURCES = \
@@ -36,7 +38,7 @@ endif
 test_gnunet_daemon_topology_SOURCES = \
  test_gnunet_daemon_topology.c
 test_gnunet_daemon_topology_LDADD = \
- $(top_builddir)/src/testing/libgnunettesting.la \
+ $(top_builddir)/src/testbed/libgnunettestbed.la \
  $(top_builddir)/src/util/libgnunetutil.la  
 
 EXTRA_DIST = \

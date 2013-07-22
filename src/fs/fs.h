@@ -1,6 +1,6 @@
 /*
      This file is part of GNUnet.
-     (C) 2003, 2004, 2005, 2006, 2007, 2008, 2009 Christian Grothoff (and other contributing authors)
+     (C) 2003--2012 Christian Grothoff (and other contributing authors)
 
      GNUnet is free software; you can redistribute it and/or modify
      it under the terms of the GNU General Public License as published
@@ -55,12 +55,12 @@ struct ContentHashKey
   /**
    * Hash of the original content, used for encryption.
    */
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
 
   /**
    * Hash of the encrypted content, used for querying.
    */
-  GNUNET_HashCode query;
+  struct GNUNET_HashCode query;
 };
 
 
@@ -112,7 +112,7 @@ struct IndexStartMessage
   /**
    * Hash of the file that we would like to index.
    */
-  GNUNET_HashCode file_id;
+  struct GNUNET_HashCode file_id;
 
   /* this is followed by a 0-terminated
    * filename of a file with the hash
@@ -141,7 +141,7 @@ struct IndexInfoMessage
   /**
    * Hash of the indexed file.
    */
-  GNUNET_HashCode file_id;
+  struct GNUNET_HashCode file_id;
 
   /* this is followed by a 0-terminated
    * filename of a file with the hash
@@ -174,7 +174,7 @@ struct UnindexMessage
   /**
    * Hash of the file that we will unindex.
    */
-  GNUNET_HashCode file_id;
+  struct GNUNET_HashCode file_id;
 
 };
 
@@ -245,7 +245,7 @@ struct SearchMessage
    * <p>
    * If the request is for a KBLOCK, "target" must be all zeros.
    */
-  GNUNET_HashCode target;
+  struct GNUNET_HashCode target;
 
   /**
    * Hash of the keyword (aka query) for KBLOCKs; Hash of
@@ -253,7 +253,7 @@ struct SearchMessage
    * and hash of the identifier XORed with the target for
    * SBLOCKS (aka query).
    */
-  GNUNET_HashCode query;
+  struct GNUNET_HashCode query;
 
   /* this is followed by the hash codes of already-known
    * results (which should hence be excluded from what
@@ -320,6 +320,18 @@ struct ClientPutMessage
    * (FOREVER if unknown/not relevant)
    */
   struct GNUNET_TIME_AbsoluteNBO last_transmission;
+
+  /**
+   * How often did we transmit this query before getting an
+   * answer (estimate).
+   */
+  uint32_t num_transmissions;
+
+  /**
+   * How much respect did we offer (in total) before getting an
+   * answer (estimate).
+   */
+  uint32_t respect_offered;
 
   /* this is followed by the actual encrypted content */
 

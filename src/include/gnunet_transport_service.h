@@ -43,6 +43,13 @@ extern "C"
  */
 #define GNUNET_TRANSPORT_VERSION 0x00000000
 
+enum TRAFFIC_METRIC_DIRECTION
+{
+	TM_SEND = 0,
+	TM_RECEIVE = 1,
+	TM_BOTH = 2
+};
+
 
 /**
  * Function called by the transport for each received message.
@@ -96,6 +103,18 @@ typedef void (*GNUNET_TRANSPORT_NotifyConnect) (void *cls,
 typedef void (*GNUNET_TRANSPORT_NotifyDisconnect) (void *cls,
                                                    const struct
                                                    GNUNET_PeerIdentity * peer);
+
+
+/**
+ * Function to call with result of the try connect request.
+ *
+ *
+ * @param cls closure
+ * @param result GNUNET_OK if message was transmitted to transport service
+ *               GNUNET_SYSERR if message was not transmitted to transport service
+ */
+typedef void (*GNUNET_TRANSPORT_TryConnectCallback) (void *cls,
+                                                     const int result);
 
 
 /**
@@ -159,16 +178,38 @@ GNUNET_TRANSPORT_disconnect (struct GNUNET_TRANSPORT_Handle *handle);
 
 
 /**
+ * Opaque handle for a transmission-ready request.
+ */
+struct GNUNET_TRANSPORT_TryConnectHandle;
+
+
+/**
  * Ask the transport service to establish a connection to
  * the given peer.
  *
  * @param handle connection to transport service
  * @param target who we should try to connect to
+ * @param cb callback to be called when request was transmitted to transport
+ *         service
+ * @param cb_cls closure for the callback
+ * @return a GNUNET_TRANSPORT_TryConnectHandle handle or
+ *         NULL on failure (cb will not be called)
+ */
+struct GNUNET_TRANSPORT_TryConnectHandle *
+GNUNET_TRANSPORT_try_connect (struct GNUNET_TRANSPORT_Handle *handle,
+                              const struct GNUNET_PeerIdentity *target,
+                              GNUNET_TRANSPORT_TryConnectCallback cb,
+                              void *cb_cls);
+
+
+/**
+ * Cancel the request to transport to try a connect
+ * Callback will not be called
+ *
+ * @param tch GNUNET_TRANSPORT_TryConnectHandle handle to cancel
  */
 void
-GNUNET_TRANSPORT_try_connect (struct GNUNET_TRANSPORT_Handle *handle,
-                              const struct GNUNET_PeerIdentity *target);
-
+GNUNET_TRANSPORT_try_connect_cancel (struct GNUNET_TRANSPORT_TryConnectHandle *tch);
 
 /**
  * Opaque handle for a transmission-ready request.
@@ -236,7 +277,54 @@ struct GNUNET_TRANSPORT_GetHelloHandle;
 
 
 /**
- * Obtain updates on changes to the HELLO message for this peer.
+  * Checks if a neighbour is connected
+  *
+  * @param handle connection to transport service
+  * @peer the peer to check
+  * @return GNUNET_YES or GNUNET_NO
+  *
+  */
+int
+GNUNET_TRANSPORT_check_neighbour_connected (struct GNUNET_TRANSPORT_Handle *handle,
+                              					const struct GNUNET_PeerIdentity *peer);
+
+
+/**
+ * Set transport metrics for a peer and a direction
+ *
+ * @param handle transport handle
+ * @param peer the peer to set the metric for
+ * @param direction can be: TM_SEND, TM_RECV, TM_BOTH
+ * @param ats the metric as ATS information
+ * @param ats_count the number of metrics
+ *
+ * Supported ATS values:
+ * GNUNET_ATS_QUALITY_NET_DELAY  (value in ms)
+ * GNUNET_ATS_QUALITY_NET_DISTANCE (value in #hops)
+ *
+ * Example
+ * To enforce a delay of 10 ms for peer p1 in sending direction use:
+ *
+ * struct GNUNET_ATS_Information ats;
+ * ats.type = ntohl (GNUNET_ATS_QUALITY_NET_DELAY);
+ * ats.value = ntohl (10);
+ * GNUNET_TRANSPORT_set_traffic_metric (th, p1, TM_SEND, &ats, 1);
+ *
+ * Note:
+ * Delay restrictions in receiving direction will be enforced with
+ * 1 message delay.
+ */
+void
+GNUNET_TRANSPORT_set_traffic_metric (struct GNUNET_TRANSPORT_Handle *handle,
+																		const struct GNUNET_PeerIdentity *peer,
+																		int direction,
+																		const struct GNUNET_ATS_Information *ats,
+																		size_t ats_count);
+
+
+/**
+ * Obtain updates on changes to the HELLO message for this peer. The callback
+ * given in this function is never called synchronously.
  *
  * @param handle connection to transport service
  * @param rec function to call with the HELLO
@@ -252,7 +340,7 @@ GNUNET_TRANSPORT_get_hello (struct GNUNET_TRANSPORT_Handle *handle,
 /**
  * Stop receiving updates about changes to our HELLO message.
  *
- * @param ghh handle returned from 'GNUNET_TRANSPORT_get_hello')
+ * @param ghh handle to cancel
  */
 void
 GNUNET_TRANSPORT_get_hello_cancel (struct GNUNET_TRANSPORT_GetHelloHandle *ghh);
@@ -265,14 +353,27 @@ GNUNET_TRANSPORT_get_hello_cancel (struct GNUNET_TRANSPORT_GetHelloHandle *ghh);
  *
  * @param handle connection to transport service
  * @param hello the hello message
- * @param cont continuation to call when HELLO has been sent
+ * @param cont continuation to call when HELLO has been sent,
+ *      tc reason GNUNET_SCHEDULER_REASON_TIMEOUT for fail
+ *      tc reasong GNUNET_SCHEDULER_REASON_READ_READY for success
  * @param cls closure for continuation
+ * @return a GNUNET_TRANSPORT_OfferHelloHandle handle or NULL on failure,
+ *      in case of failure cont will not be called
+ *
  */
-void
+struct GNUNET_TRANSPORT_OfferHelloHandle *
 GNUNET_TRANSPORT_offer_hello (struct GNUNET_TRANSPORT_Handle *handle,
                               const struct GNUNET_MessageHeader *hello,
                               GNUNET_SCHEDULER_Task cont, void *cls);
 
+
+/**
+ * Cancel the request to transport to offer the HELLO message
+ *
+ * @param ohh the GNUNET_TRANSPORT_OfferHelloHandle to cancel
+ */
+void
+GNUNET_TRANSPORT_offer_hello_cancel (struct GNUNET_TRANSPORT_OfferHelloHandle *ohh);
 
 /**
  * Handle to cancel a pending address lookup.
@@ -315,7 +416,7 @@ GNUNET_TRANSPORT_address_to_string_cancel (struct
 
 /**
  * Return all the known addresses for a specific peer or all peers.
- * Returns continously all address if one_shot is set to GNUNET_NO
+ * Returns continuously all address if one_shot is set to GNUNET_NO
  *
  * CHANGE: Returns the address(es) that we are currently using for this
  * peer.  Upon completion, the 'AddressLookUpCallback' is called one more

@@ -1,0 +1,18 @@
+[testbed]
+AUTOSTART = NO
+@UNIXONLY@ PORT = 2101
+HOSTNAME = localhost
+HOME = $SERVICEHOME
+BINARY = gnunet-service-testbed
+# Set this to the path where the testbed helper is installed
+# HELPER_BINARY_PATH = @prefix@/lib/gnunet/libexec/gnunet-helper-testbed
+ACCEPT_FROM = 127.0.0.1;
+ACCEPT_FROM6 = ::1;
+UNIXPATH = /tmp/gnunet-service-testbed.sock
+UNIX_MATCH_UID = YES
+UNIX_MATCH_GID = YES
+MAX_PARALLEL_OPERATIONS = 1000
+MAX_PARALLEL_SERVICE_CONNECTIONS = 256
+MAX_PARALLEL_TOPOLOGY_CONFIG_OPERATIONS = 1
+CACHE_SIZE = 30
+MAX_OPEN_FDS = 512
