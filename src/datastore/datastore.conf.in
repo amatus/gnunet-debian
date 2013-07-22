@@ -1,16 +1,15 @@
 [datastore]
 AUTOSTART = YES
 UNIXPATH = /tmp/gnunet-service-datastore.sock
-UNIX_MATCH_UID = YES
+UNIX_MATCH_UID = NO
 UNIX_MATCH_GID = YES
 @UNIXONLY@ PORT = 2093
 HOSTNAME = localhost
 HOME = $SERVICEHOME
-CONFIG = $DEFAULTCONFIG
 BINARY = gnunet-service-datastore
 ACCEPT_FROM = 127.0.0.1;
 ACCEPT_FROM6 = ::1;
-QUOTA = 100 MB
+QUOTA = 5 GB
 BLOOMFILTER = $SERVICEHOME/datastore/bloomfilter
 DATABASE = sqlite
 # DISABLE_SOCKET_FORWARDING = NO
@@ -30,4 +29,5 @@ CONFIG = ~/.my.cnf
 # PORT = 3306
 
 
-
+[datastore-heap]
+HASHMAPSIZE = 1024

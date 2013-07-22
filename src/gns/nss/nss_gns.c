@@ -4,8 +4,8 @@
     Parts taken from: nss.c in nss-mdns
 
     nss-mdns is free software; you can redistribute it and/or modify
-    it under the terms of the GNU Lesser General Public License as published
-    by the Free Software Foundation; either version 2 of the License,
+    it under the terms of the GNU General Public License as published
+    by the Free Software Foundation; either version 3 of the License,
     or (at your option) any later version.
  
     nss-mdns is distributed in the hope that it will be useful, but1
@@ -61,13 +61,13 @@ static int ends_with(const char *name, const char* suffix) {
 
 
 /**
- * Check if name is inside .gnunet or .zkey TLD
+ * Check if name is inside .gads or .zkey TLD
  *
  * @param name name to check
  * @return 1 if true
  */
 static int verify_name_allowed(const char *name) {
-    return ends_with(name, ".gnunet") || ends_with(name, ".zkey"); 
+    return ends_with(name, ".gads") || ends_with(name, ".zkey"); 
 }
 
 /**
@@ -140,13 +140,19 @@ enum nss_status _nss_gns_gethostbyname2_r(
         if (!gns_resolve_name(af, name, &u) == 0)
         {
           status = NSS_STATUS_NOTFOUND;
+          goto finish;
         }
+    }
+    else
+    {
+      status = NSS_STATUS_UNAVAIL;
+      goto finish;
     }
 
     if (u.count == 0) {
         *errnop = ETIMEDOUT;
         *h_errnop = HOST_NOT_FOUND;
-        printf("not found\n");
+        status = NSS_STATUS_NOTFOUND;
         goto finish;
     }
 

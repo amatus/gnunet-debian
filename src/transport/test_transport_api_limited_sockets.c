@@ -27,21 +27,8 @@
  * C code apparently.
  */
 #include "platform.h"
-#include "gnunet_common.h"
-#include "gnunet_hello_lib.h"
-#include "gnunet_getopt_lib.h"
-#include "gnunet_os_lib.h"
-#include "gnunet_program_lib.h"
-#include "gnunet_scheduler_lib.h"
 #include "gnunet_transport_service.h"
-#include "transport.h"
 #include "transport-testing.h"
-
-#define VERBOSE GNUNET_NO
-
-#define VERBOSE_ARM GNUNET_NO
-
-#define START_ARM GNUNET_YES
 
 /**
  * How long until we give up on transmitting the message?
@@ -56,6 +43,9 @@
 #define MTYPE 12345
 
 #define MAX_FILES 50
+
+
+#if HAVE_SETRLIMIT
 
 static char *test_source;
 
@@ -107,6 +97,8 @@ end ()
 
   GNUNET_TRANSPORT_TESTING_stop_peer (tth, p1);
   GNUNET_TRANSPORT_TESTING_stop_peer (tth, p2);
+  GNUNET_TRANSPORT_TESTING_done (tth);
+
 }
 
 static void
@@ -130,6 +122,9 @@ end_badly (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
     GNUNET_TRANSPORT_TESTING_stop_peer (tth, p1);
   if (p2 != NULL)
     GNUNET_TRANSPORT_TESTING_stop_peer (tth, p2);
+
+  if (NULL != th)
+    GNUNET_TRANSPORT_TESTING_done (tth);
 
   ok = GNUNET_SYSERR;
 }
@@ -241,7 +236,7 @@ start_cb (struct PeerContext *p, void *cls)
   if (started != 2)
     return;
 
-  cc = GNUNET_TRANSPORT_TESTING_connect_peers (tth, p1, p2, &testing_connect_cb,
+  cc = GNUNET_TRANSPORT_TESTING_connect_peers (tth, p2, p1, &testing_connect_cb,
                                                NULL);
 
 }
@@ -279,9 +274,6 @@ check ()
   static char *const argv[] = { "test-transport-api",
     "-c",
     "test_transport_api_data.conf",
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
     NULL
   };
   static struct GNUNET_GETOPT_CommandLineOption options[] = {
@@ -300,38 +292,23 @@ check ()
   return ok;
 }
 
+
 int
 main (int argc, char *argv[])
 {
+  struct rlimit r_file_old;
+  struct rlimit r_file_new;
+  int res;
   int ret = 0;
 
   test_plugin = NULL;
-
   GNUNET_TRANSPORT_TESTING_get_test_source_name (__FILE__, &test_source);
   GNUNET_TRANSPORT_TESTING_get_test_plugin_name (argv[0], test_source,
                                                  &test_plugin);
   GNUNET_TRANSPORT_TESTING_get_test_name (argv[0], &test_name);
-
   GNUNET_log_setup (test_name,
-#if VERBOSE
-                    "DEBUG",
-#else
                     "WARNING",
-#endif
                     NULL);
-
-#if !HAVE_SETRLIMIT
-  GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "Cannot run test on this system\n");
-
-  GNUNET_free (test_source);
-  GNUNET_free (test_plugin);
-  GNUNET_free (test_name);
-
-  return 0;
-#else
-  struct rlimit r_file_old;
-  struct rlimit r_file_new;
-  int res;
 
   res = getrlimit (RLIMIT_NOFILE, &r_file_old);
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
@@ -355,27 +332,27 @@ main (int argc, char *argv[])
   GNUNET_TRANSPORT_TESTING_get_config_name (argv[0], &cfg_file_p1, 1);
   GNUNET_TRANSPORT_TESTING_get_config_name (argv[0], &cfg_file_p2, 2);
   ret = check ();
-#endif
-
 
   GNUNET_free (cfg_file_p1);
   GNUNET_free (cfg_file_p2);
-
   GNUNET_free (test_source);
   GNUNET_free (test_plugin);
   GNUNET_free (test_name);
-
-#if HAVE_SETRLIMIT
-  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
-              "Restoring previous value maximum number of open files\n");
-  res = setrlimit (RLIMIT_NOFILE, &r_file_old);
-  if (res != 0)
-  {
-    GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "Restoring limit failed!\n");
-    return 0;
-  }
-#endif
   return ret;
 }
 
+#else 
+/* cannot setrlimit */
+
+
+int
+main (int argc, char *argv[])
+{
+  fprintf (stderr, "Cannot run test on this system\n");
+  return 0;
+}
+
+#endif
+
 /* end of test_transport_api_limited_sockets.c */
+

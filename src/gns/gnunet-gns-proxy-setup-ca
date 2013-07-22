@@ -1,0 +1,31 @@
+echo "Generating CA"
+
+openssl req -new -x509 -days 3650 -extensions v3_ca -keyout gnscakey.pem -out gnscacert.pem -subj "/C=DE/ST=Bavaria/L=Munich/O=GADS/OU=GNUnet/CN=GADS Proxy CA/emailAddress=bounce@gnunet.org" -passout pass:"GNUnet Naming System"
+
+echo "Removing passphrase from key"
+openssl rsa -passin pass:"GNUnet Naming System" -in gnscakey.pem -out gnscakeynoenc.pem
+
+cp gnscacert.pem $HOME/.gnunet/gns/gnscert.pem
+cat gnscacert.pem > $HOME/.gnunet/gns/gnsCAcert.pem
+cat gnscakeynoenc.pem >> $HOME/.gnunet/gns/gnsCAcert.pem
+
+echo "Importing CA into browsers"
+for f in ~/.mozilla/firefox/*.default
+do
+  if [ -d $f ]; then
+    echo "Importing CA info firefox $f"
+    certutil -D -n "GNS Proxy CA" -d ~/.mozilla/firefox/*.default >/dev/null 2&>1
+    certutil -A -n "GNS Proxy CA" -t CT,, -d ~/.mozilla/firefox/*.default < gnscacert.pem
+  fi
+done
+
+if [ -d ~/.pki/nssdb ]; then
+  echo "Importing CA into chrome"
+  certutil -D -n "GADS Proxy CA" -d ~/.pki/nssdb >/dev/null 2&>1
+  certutil -A -n "GADS Proxy CA" -t CT,, -d ~/.pki/nssdb < gnscacert.pem
+fi
+
+
+rm gnscakey.pem gnscakeynoenc.pem gnscacert.pem
+
+echo "You can now start gnunet-gns-proxy and configure your browser to use a SOCKS proxy on port 7777"

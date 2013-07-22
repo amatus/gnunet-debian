@@ -75,6 +75,7 @@ get_type (uint16_t type)
   case GNUNET_DNSPARSER_TYPE_MX: return "MX";
   case GNUNET_DNSPARSER_TYPE_TXT: return "TXT";
   case GNUNET_DNSPARSER_TYPE_AAAA: return "AAAA";
+  case GNUNET_DNSPARSER_TYPE_SRV: return "SRV";
   }
   GNUNET_snprintf (buf, sizeof (buf), "%u", (unsigned int) type);
   return buf;
@@ -151,7 +152,7 @@ display_record (const struct GNUNET_DNSPARSER_Record *record)
     format = record->data.hostname;
     break;
   case GNUNET_DNSPARSER_TYPE_SOA:
-    if (record->data.soa == NULL)
+    if (NULL == record->data.soa)
       format = "<invalid>";
     else
     {
@@ -176,6 +177,23 @@ display_record (const struct GNUNET_DNSPARSER_Record *record)
 		       "%u: %s",
 		       record->data.mx->preference,
 		       record->data.mx->mxhost);
+      format = tmp;
+    }
+    break;
+  case GNUNET_DNSPARSER_TYPE_SRV:
+    if (NULL == record->data.srv)
+      format = "<invalid>";
+    else
+    {
+      GNUNET_asprintf (&tmp,
+		       "service: %s, protocol: %s, domain_name = %s, priority %u, weight = %s, port = %u, target = %s",
+		       record->data.srv->service,
+		       record->data.srv->proto,
+		       record->data.srv->domain_name,
+		       (unsigned int) record->data.srv->priority,
+		       (unsigned int) record->data.srv->weight,
+		       (unsigned int) record->data.srv->port,
+		       record->data.srv->target);
       format = tmp;
     }
     break;
@@ -342,11 +360,16 @@ main (int argc, char *const *argv)
     GNUNET_GETOPT_OPTION_VERBOSE (&verbosity),
     GNUNET_GETOPT_OPTION_END
   };
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "gnunet-dns-monitor",
-                              gettext_noop
-                              ("Monitor DNS queries."), options,
-                              &run, NULL)) ? ret : 1;
+
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+  ret = (GNUNET_OK ==
+	 GNUNET_PROGRAM_run (argc, argv, "gnunet-dns-monitor",
+			     gettext_noop
+			     ("Monitor DNS queries."), options,
+			     &run, NULL)) ? ret : 1;
+  GNUNET_free ((void*) argv);
+  return ret;
 }
 
 

@@ -30,6 +30,20 @@
 #include "gnunet_util_lib.h"
 #include "gnunet_hello_lib.h"
 
+/**
+ * Number of network types supported by ATS
+ */
+#define GNUNET_ATS_NetworkTypeCount 5
+
+/**
+ * ATS network types as array initializer
+ */
+#define GNUNET_ATS_NetworkType {GNUNET_ATS_NET_UNSPECIFIED, GNUNET_ATS_NET_LOOPBACK, GNUNET_ATS_NET_LAN, GNUNET_ATS_NET_WAN, GNUNET_ATS_NET_WLAN}
+
+/**
+ * ATS network types as string array initializer
+ */
+#define GNUNET_ATS_NetworkTypeString {"UNSPECIFIED", "LOOPBACK", "LAN", "WAN", "WLAN"}
 
 enum GNUNET_ATS_Network_Type
 {
@@ -39,6 +53,26 @@ enum GNUNET_ATS_Network_Type
   GNUNET_ATS_NET_WAN = 3,
   GNUNET_ATS_NET_WLAN = 4,
 };
+
+/**
+ * Default bandwidth assigned to a network : 64 KB/s
+ */
+#define GNUNET_ATS_DefaultBandwidth 65536
+
+/**
+ * Maximum bandwidth assigned to a network : 4095 MB/s
+ */
+#define GNUNET_ATS_MaxBandwidth UINT32_MAX
+
+/**
+ * Number of property types supported by ATS
+ */
+#define GNUNET_ATS_PropertyCount 9
+
+/**
+ * ATS properties types as string array initializer
+ */
+#define GNUNET_ATS_PropertyStrings {"Terminator", "Utilization up", "Utilization down", "Network type", "Delay", "Distance", "Cost WAN", "Cost LAN", "Cost WLAN"}
 
 /**
  * Enum defining all known property types for ATS Enum values are used
@@ -413,14 +447,10 @@ enum GNUNET_ATS_Property
 #define GNUNET_ATS_QualityProperties {GNUNET_ATS_QUALITY_NET_DELAY, GNUNET_ATS_QUALITY_NET_DISTANCE}
 
 /**
- * Number of ATS quality properties
+ * ATS quality properties as string array initializer
  */
-#define GNUNET_ATS_NetworkTypeCount 5
+#define GNUNET_ATS_QualityPropertiesString {"Delay", "Distance"}
 
-/**
- * ATS quality properties as array initializer
- */
-#define GNUNET_ATS_NetworkType {GNUNET_ATS_NET_UNSPECIFIED, GNUNET_ATS_NET_LOOPBACK, GNUNET_ATS_NET_LAN, GNUNET_ATS_NET_WAN, GNUNET_ATS_NET_WLAN}
 
 GNUNET_NETWORK_STRUCT_BEGIN
 
@@ -464,11 +494,19 @@ GNUNET_NETWORK_STRUCT_END
  */
 struct GNUNET_ATS_SchedulingHandle;
 
+/**
+ * Handle for address suggestion requests
+ *
+ */
+struct GNUNET_ATS_SuggestHandle;
+
+
 
 /**
  * Opaque session handle, defined by plugins.  Contents not known to ATS.
  */
 struct Session;
+
 
 
 /**
@@ -539,8 +577,9 @@ GNUNET_ATS_reset_backoff (struct GNUNET_ATS_SchedulingHandle *sh,
  *
  * @param sh handle
  * @param peer identity of the peer we need an address for
+ * @return suggestion handle
  */
-void
+struct GNUNET_ATS_SuggestHandle *
 GNUNET_ATS_suggest_address (struct GNUNET_ATS_SchedulingHandle *sh,
                             const struct GNUNET_PeerIdentity *peer);
 
@@ -557,6 +596,15 @@ GNUNET_ATS_suggest_address_cancel (struct GNUNET_ATS_SchedulingHandle *sh,
 
 
 /**
+ * Convert a GNUNET_ATS_NetworkType to a string
+ *
+ * @param net the network type
+ * @return a string or NULL if invalid
+ */
+const char *
+GNUNET_ATS_print_network_type (uint32_t net);
+
+/**
  * Returns where the address is located: LAN or WAN or ...
  * @param sh the GNUNET_ATS_SchedulingHandle handle
  * @param addr address
@@ -567,6 +615,23 @@ struct GNUNET_ATS_Information
 GNUNET_ATS_address_get_type (struct GNUNET_ATS_SchedulingHandle *sh,
                              const struct sockaddr * addr,
                              socklen_t addrlen);
+
+/**
+ * We have a new address ATS should know. Addresses have to be added with this
+ * function before they can be: updated, set in use and destroyed
+ *
+ * @param sh handle
+ * @param address the address
+ * @param session session handle (if available)
+ * @param ats performance data for the address
+ * @param ats_count number of performance records in 'ats'
+ */
+int
+GNUNET_ATS_address_add (struct GNUNET_ATS_SchedulingHandle *sh,
+                        const struct GNUNET_HELLO_Address *address,
+                        struct Session *session,
+                        const struct GNUNET_ATS_Information *ats,
+                        uint32_t ats_count);
 
 
 /**
@@ -651,6 +716,11 @@ typedef void (*GNUNET_ATS_PeerInformationCallback) (void *cls,
                                                     GNUNET_ATS_Information *
                                                     ats, uint32_t ats_count);
 
+/**
+ * Handle for an address listing operation
+ */
+struct GNUNET_ATS_AddressListHandle;
+
 
 /**
  * Get handle to access performance API of the ATS subsystem.
@@ -664,6 +734,35 @@ struct GNUNET_ATS_PerformanceHandle *
 GNUNET_ATS_performance_init (const struct GNUNET_CONFIGURATION_Handle *cfg,
                              GNUNET_ATS_PeerInformationCallback infocb,
                              void *infocb_cls);
+
+
+/**
+ * Get information about addresses known to the ATS subsystem.
+ *
+ * @param handle the performance handle to use
+ * @param peer peer idm can be NULL for all peers
+ * @param all GNUNET_YES to get information about all addresses or GNUNET_NO to
+ *        get only address currently used
+ * @param infocb callback to call with the addresses,
+ *        will callback with address == NULL when done
+ * @param infocb_cls closure for infocb
+ * @return ats performance context
+ */
+struct GNUNET_ATS_AddressListHandle *
+GNUNET_ATS_performance_list_addresses (struct GNUNET_ATS_PerformanceHandle *handle,
+                                       const struct GNUNET_PeerIdentity *peer,
+                                       int all,
+                                       GNUNET_ATS_PeerInformationCallback infocb,
+                                       void *infocb_cls);
+
+
+/**
+ * Cancel a pending address listing operation
+ *
+ * @param handle the GNUNET_ATS_AddressListHandle handle to cancel
+ */
+void
+GNUNET_ATS_performance_list_addresses_cancel (struct GNUNET_ATS_AddressListHandle *handle);
 
 
 /**
@@ -730,6 +829,21 @@ void
 GNUNET_ATS_reserve_bandwidth_cancel (struct GNUNET_ATS_ReservationContext *rc);
 
 
+/**
+ * Number of preference types supported by ATS
+ */
+#define GNUNET_ATS_PreferenceCount 3
+
+/**
+ * ATS preference types as array initializer
+ */
+#define GNUNET_ATS_PreferenceType {GNUNET_ATS_PREFERENCE_END, GNUNET_ATS_PREFERENCE_BANDWIDTH, GNUNET_ATS_PREFERENCE_LATENCY}
+
+/**
+ * ATS preference types as string array initializer
+ */
+#define GNUNET_ATS_PreferenceTypeString {"END", "BANDWIDTH", "LATENCY"}
+
 
 /**
  * Enum defining all known preference categories.
@@ -760,6 +874,14 @@ enum GNUNET_ATS_PreferenceKind
   GNUNET_ATS_PREFERENCE_LATENCY
 };
 
+/**
+ * Convert a GNUNET_ATS_PreferenceType to a string
+ *
+ * @param type the preference type
+ * @return a string or NULL if invalid
+ */
+const char *
+GNUNET_ATS_print_preference_type (uint32_t type);
 
 /**
  * Change preferences for the given peer. Preference changes are forgotten if peers

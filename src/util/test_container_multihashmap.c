@@ -35,12 +35,12 @@ static int
 testMap (int i)
 {
   struct GNUNET_CONTAINER_MultiHashMap *m;
-  GNUNET_HashCode k1;
-  GNUNET_HashCode k2;
+  struct GNUNET_HashCode k1;
+  struct GNUNET_HashCode k2;
   const char *ret;
   int j;
 
-  CHECK (NULL != (m = GNUNET_CONTAINER_multihashmap_create (i)));
+  CHECK (NULL != (m = GNUNET_CONTAINER_multihashmap_create (i, GNUNET_NO)));
   memset (&k1, 0, sizeof (k1));
   memset (&k2, 1, sizeof (k2));
   CHECK (GNUNET_NO == GNUNET_CONTAINER_multihashmap_contains (m, &k1));

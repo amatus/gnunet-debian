@@ -207,7 +207,7 @@ struct EncryptedMessage
    * (excluding this value itself) will be encrypted and authenticated.
    * ENCRYPTED_HEADER_SIZE must be set to the offset of the *next* field.
    */
-  GNUNET_HashCode hmac;
+  struct GNUNET_HashCode hmac;
 
   /**
    * Sequence number, in network byte order.  This field
@@ -1357,6 +1357,8 @@ send_key (struct GSC_KeyExchangeInfo *kx)
     return;                     /* nothing to do */
   if (NULL == kx->public_key)
   {
+    if (NULL != kx->pitr)
+      return;
     /* lookup public key, then try again */
     GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
                 "Trying to obtain public key for `%s'\n",
@@ -1513,7 +1515,7 @@ GSC_KX_handle_encrypted_message (struct GSC_KeyExchangeInfo *kx,
 {
   const struct EncryptedMessage *m;
   struct EncryptedMessage *pt;  /* plaintext */
-  GNUNET_HashCode ph;
+  struct GNUNET_HashCode ph;
   uint32_t snum;
   struct GNUNET_TIME_Absolute t;
   struct GNUNET_CRYPTO_AesInitializationVector iv;
@@ -1550,10 +1552,10 @@ GSC_KX_handle_encrypted_message (struct GSC_KeyExchangeInfo *kx,
                    kx->decrypt_key_created);
   GNUNET_CRYPTO_hmac (&auth_key, &m->sequence_number,
                       size - ENCRYPTED_HEADER_SIZE, &ph);
-  if (0 != memcmp (&ph, &m->hmac, sizeof (GNUNET_HashCode)))
+  if (0 != memcmp (&ph, &m->hmac, sizeof (struct GNUNET_HashCode)))
   {
     /* checksum failed */
-    GNUNET_break_op (0);
+    GNUNET_log (GNUNET_ERROR_TYPE_WARNING, "Failed checksum validation for a message from `%s'\n", GNUNET_i2s (&kx->peer));
     return;
   }
   derive_iv (&iv, &kx->decrypt_key, m->iv_seed, &GSC_my_identity);
@@ -1623,8 +1625,8 @@ GSC_KX_handle_encrypted_message (struct GSC_KeyExchangeInfo *kx,
       MAX_MESSAGE_AGE.rel_value)
   {
     GNUNET_log (GNUNET_ERROR_TYPE_INFO,
-                _("Message received far too old (%llu ms). Content ignored.\n"),
-                GNUNET_TIME_absolute_get_duration (t).rel_value);
+                _("Message received far too old (%s). Content ignored.\n"),
+                GNUNET_STRINGS_relative_time_to_string (GNUNET_TIME_absolute_get_duration (t), GNUNET_YES));
     GNUNET_STATISTICS_update (GSC_stats,
                               gettext_noop
                               ("# bytes dropped (ancient message)"), size,
@@ -1684,30 +1686,13 @@ deliver_message (void *cls, void *client, const struct GNUNET_MessageHeader *m)
 /**
  * Initialize KX subsystem.
  *
+ * @param pk private key to use for the peer
  * @return GNUNET_OK on success, GNUNET_SYSERR on failure
  */
 int
-GSC_KX_init ()
+GSC_KX_init (struct GNUNET_CRYPTO_RsaPrivateKey *pk)
 {
-  char *keyfile;
-
-  if (GNUNET_OK !=
-      GNUNET_CONFIGURATION_get_value_filename (GSC_cfg, "GNUNETD", "HOSTKEY",
-                                               &keyfile))
-  {
-    GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
-                _
-                ("Core service is lacking HOSTKEY configuration setting.  Exiting.\n"));
-    return GNUNET_SYSERR;
-  }
-  my_private_key = GNUNET_CRYPTO_rsa_key_create_from_file (keyfile);
-  GNUNET_free (keyfile);
-  if (NULL == my_private_key)
-  {
-    GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
-                _("Core service could not access hostkey.  Exiting.\n"));
-    return GNUNET_SYSERR;
-  }
+  my_private_key = pk;
   GNUNET_CRYPTO_rsa_key_get_public (my_private_key, &my_public_key);
   GNUNET_CRYPTO_hash (&my_public_key, sizeof (my_public_key),
                       &GSC_my_identity.hashPubKey);

@@ -83,10 +83,10 @@ publish_cleanup (struct GNUNET_FS_PublishContext *pc)
     pc->fhc = NULL;
   }
   GNUNET_FS_file_information_destroy (pc->fi, NULL, NULL);
-  if (pc->namespace != NULL)
+  if (pc->ns != NULL)
   {
-    GNUNET_FS_namespace_delete (pc->namespace, GNUNET_NO);
-    pc->namespace = NULL;
+    GNUNET_FS_namespace_delete (pc->ns, GNUNET_NO);
+    pc->ns = NULL;
   }
   GNUNET_free_non_null (pc->nid);
   GNUNET_free_non_null (pc->nuid);
@@ -269,8 +269,8 @@ publish_sblocks_cont (void *cls, const struct GNUNET_FS_Uri *uri,
 static void
 publish_sblock (struct GNUNET_FS_PublishContext *pc)
 {
-  if (NULL != pc->namespace)
-    pc->sks_pc = GNUNET_FS_publish_sks (pc->h, pc->namespace, pc->nid, pc->nuid,
+  if (NULL != pc->ns)
+    pc->sks_pc = GNUNET_FS_publish_sks (pc->h, pc->ns, pc->nid, pc->nuid,
 					pc->fi->meta, pc->fi->chk_uri, &pc->fi->bo,
 					pc->options, &publish_sblocks_cont, pc);
   else
@@ -569,6 +569,7 @@ publish_content (struct GNUNET_FS_PublishContext *pc)
               GNUNET_free (raw_data);
               raw_data = NULL;
             }
+	    dirpos->data.file.reader (dirpos->data.file.reader_cls, UINT64_MAX, 0, 0, NULL);
           }
         }
         GNUNET_FS_directory_builder_add (db, dirpos->chk_uri, dirpos->meta,
@@ -657,7 +658,7 @@ process_index_start_response (void *cls, const struct GNUNET_MessageHeader *msg)
  * @param res resulting hash, NULL on error
  */
 static void
-hash_for_index_cb (void *cls, const GNUNET_HashCode * res)
+hash_for_index_cb (void *cls, const struct GNUNET_HashCode * res)
 {
   struct GNUNET_FS_PublishContext *pc = cls;
   struct GNUNET_FS_FileInformation *p;
@@ -958,8 +959,52 @@ fip_signal_start (void *cls, struct GNUNET_FS_FileInformation *fi,
 
 
 /**
- * Signal the FS's progress function that we are suspending
+ * Actually signal the FS's progress function that we are suspending
  * an upload.
+ *
+ * @param fi the entry in the publish-structure
+ * @param pc the publish context of which a file is being suspended
+ */
+static void
+suspend_operation (struct GNUNET_FS_FileInformation *fi,
+		   struct GNUNET_FS_PublishContext *pc)
+{
+  struct GNUNET_FS_ProgressInfo pi;
+  uint64_t off;
+
+  if (NULL != pc->ksk_pc)
+  {
+    GNUNET_FS_publish_ksk_cancel (pc->ksk_pc);
+    pc->ksk_pc = NULL;
+  }
+  if (NULL != pc->sks_pc)
+  {
+    GNUNET_FS_publish_sks_cancel (pc->sks_pc);
+    pc->sks_pc = NULL;
+  }
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Suspending publish operation\n");
+  GNUNET_free_non_null (fi->serialization);
+  fi->serialization = NULL;
+  off = (fi->chk_uri == NULL) ? 0 : (fi->is_directory == GNUNET_YES) ? fi->data.dir.dir_size : fi->data.file.file_size;
+  pi.status = GNUNET_FS_STATUS_PUBLISH_SUSPEND;
+  GNUNET_break (NULL == GNUNET_FS_publish_make_status_ (&pi, pc, fi, off));
+  if (NULL != pc->qre)
+  {
+    GNUNET_DATASTORE_cancel (pc->qre);
+    pc->qre = NULL;
+  }
+  if (NULL != pc->dsh)
+  {
+    GNUNET_DATASTORE_disconnect (pc->dsh, GNUNET_NO);
+    pc->dsh = NULL;
+  }
+  pc->rid = 0;
+}
+
+
+/**
+ * Signal the FS's progress function that we are suspending
+ * an upload.  Performs the recursion.
  *
  * @param cls closure (of type "struct GNUNET_FS_PublishContext*")
  * @param fi the entry in the publish-structure
@@ -979,8 +1024,6 @@ fip_signal_suspend (void *cls, struct GNUNET_FS_FileInformation *fi,
                     void **client_info)
 {
   struct GNUNET_FS_PublishContext *pc = cls;
-  struct GNUNET_FS_ProgressInfo pi;
-  uint64_t off;
 
   if (GNUNET_YES == pc->skip_next_fi_callback)
   {
@@ -993,34 +1036,8 @@ fip_signal_suspend (void *cls, struct GNUNET_FS_FileInformation *fi,
     pc->skip_next_fi_callback = GNUNET_YES;
     GNUNET_FS_file_information_inspect (fi, &fip_signal_suspend, pc);
   }
-  if (NULL != pc->ksk_pc)
-  {
-    GNUNET_FS_publish_ksk_cancel (pc->ksk_pc);
-    pc->ksk_pc = NULL;
-  }
-  if (NULL != pc->sks_pc)
-  {
-    GNUNET_FS_publish_sks_cancel (pc->sks_pc);
-    pc->sks_pc = NULL;
-  }
-  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Suspending publish operation\n");
-  GNUNET_free_non_null (fi->serialization);
-  fi->serialization = NULL;
-  off = (fi->chk_uri == NULL) ? 0 : length;
-  pi.status = GNUNET_FS_STATUS_PUBLISH_SUSPEND;
-  GNUNET_break (NULL == GNUNET_FS_publish_make_status_ (&pi, pc, fi, off));
+  suspend_operation (fi, pc);
   *client_info = NULL;
-  if (NULL != pc->qre)
-  {
-    GNUNET_DATASTORE_cancel (pc->qre);
-    pc->qre = NULL;
-  }
-  if (NULL != pc->dsh)
-  {
-    GNUNET_DATASTORE_disconnect (pc->dsh, GNUNET_NO);
-    pc->dsh = NULL;
-  }
-  pc->rid = 0;
   return GNUNET_OK;
 }
 
@@ -1041,7 +1058,9 @@ GNUNET_FS_publish_signal_suspend_ (void *cls)
     GNUNET_SCHEDULER_cancel (pc->upload_task);
     pc->upload_task = GNUNET_SCHEDULER_NO_TASK;
   }
+  pc->skip_next_fi_callback = GNUNET_YES;
   GNUNET_FS_file_information_inspect (pc->fi, &fip_signal_suspend, pc);
+  suspend_operation (pc->fi, pc);
   GNUNET_FS_end_top (pc->h, pc->top);
   pc->top = NULL;
   publish_cleanup (pc);
@@ -1086,7 +1105,7 @@ finish_reserve (void *cls, int success,
  *
  * @param h handle to the file sharing subsystem
  * @param fi information about the file or directory structure to publish
- * @param namespace namespace to publish the file in, NULL for no namespace
+ * @param ns namespace to publish the file in, NULL for no namespace
  * @param nid identifier to use for the publishd content in the namespace
  *        (can be NULL, must be NULL if namespace is NULL)
  * @param nuid update-identifier that will be used for future updates
@@ -1097,7 +1116,7 @@ finish_reserve (void *cls, int success,
 struct GNUNET_FS_PublishContext *
 GNUNET_FS_publish_start (struct GNUNET_FS_Handle *h,
                          struct GNUNET_FS_FileInformation *fi,
-                         struct GNUNET_FS_Namespace *namespace, const char *nid,
+                         struct GNUNET_FS_Namespace *ns, const char *nid,
                          const char *nuid,
                          enum GNUNET_FS_PublishOptions options)
 {
@@ -1119,11 +1138,11 @@ GNUNET_FS_publish_start (struct GNUNET_FS_Handle *h,
   ret->dsh = dsh;
   ret->h = h;
   ret->fi = fi;
-  ret->namespace = namespace;
+  ret->ns = ns;
   ret->options = options;
-  if (namespace != NULL)
+  if (ns != NULL)
   {
-    namespace->rc++;
+    ns->rc++;
     GNUNET_assert (NULL != nid);
     ret->nid = GNUNET_strdup (nid);
     if (NULL != nuid)

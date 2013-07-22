@@ -283,7 +283,7 @@ GSC_SESSIONS_create (const struct GNUNET_PeerIdentity *peer,
  * @return GNUNET_OK (continue to iterate)
  */
 static int
-notify_client_about_session (void *cls, const GNUNET_HashCode * key,
+notify_client_about_session (void *cls, const struct GNUNET_HashCode * key,
                              void *value)
 {
   struct GSC_Client *client = cls;
@@ -549,7 +549,7 @@ try_transmission (struct Session *session)
  * @return always GNUNET_OK
  */
 static int
-do_send_message (void *cls, const GNUNET_HashCode * key, void *value)
+do_send_message (void *cls, const struct GNUNET_HashCode * key, void *value)
 {
   const struct GNUNET_MessageHeader *hdr = cls;
   struct Session *session = value;
@@ -642,7 +642,7 @@ GSC_SESSIONS_transmit (struct GSC_ClientActiveRequest *car,
  */
 #include "core.h"
 static int
-queue_connect_message (void *cls, const GNUNET_HashCode * key, void *value)
+queue_connect_message (void *cls, const struct GNUNET_HashCode * key, void *value)
 {
   struct GNUNET_SERVER_TransmitContext *tc = cls;
   struct Session *session = value;
@@ -782,7 +782,7 @@ GSC_SESSIONS_add_to_typemap (const struct GNUNET_PeerIdentity *peer,
 void
 GSC_SESSIONS_init ()
 {
-  sessions = GNUNET_CONTAINER_multihashmap_create (128);
+  sessions = GNUNET_CONTAINER_multihashmap_create (128, GNUNET_NO);
 }
 
 
@@ -795,7 +795,7 @@ GSC_SESSIONS_init ()
  * @return GNUNET_OK (continue to iterate)
  */
 static int
-free_session_helper (void *cls, const GNUNET_HashCode * key, void *value)
+free_session_helper (void *cls, const struct GNUNET_HashCode * key, void *value)
 {
   struct Session *session = value;
 
@@ -810,9 +810,12 @@ free_session_helper (void *cls, const GNUNET_HashCode * key, void *value)
 void
 GSC_SESSIONS_done ()
 {
-  GNUNET_CONTAINER_multihashmap_iterate (sessions, &free_session_helper, NULL);
-  GNUNET_CONTAINER_multihashmap_destroy (sessions);
-  sessions = NULL;
+  if (NULL != sessions)
+  {
+    GNUNET_CONTAINER_multihashmap_iterate (sessions, &free_session_helper, NULL);
+    GNUNET_CONTAINER_multihashmap_destroy (sessions);
+    sessions = NULL;
+  }
 }
 
 /* end of gnunet-service-core_sessions.c */

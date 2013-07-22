@@ -159,6 +159,12 @@ struct Plugin
    */
   char *bind6_address;
 
+
+  /**
+   * Bytes currently in buffer
+   */
+  int64_t bytes_in_buffer;
+
   /**
    * Handle to NAT traversal support.
    */
@@ -175,8 +181,6 @@ struct Plugin
   struct GNUNET_NETWORK_FDSet *ws_v4;
 
 
-  int with_v4_ws;
-
   /**
    * The read socket for IPv4
    */
@@ -192,8 +196,6 @@ struct Plugin
    * FD Write set
    */
   struct GNUNET_NETWORK_FDSet *ws_v6;
-
-  int with_v6_ws;
 
   /**
    * The read socket for IPv6
@@ -268,11 +270,11 @@ struct Plugin
    */
   uint16_t aport;
 
-  struct UDPMessageWrapper *ipv4_queue_head;
-  struct UDPMessageWrapper *ipv4_queue_tail;
+  struct UDP_MessageWrapper *ipv4_queue_head;
+  struct UDP_MessageWrapper *ipv4_queue_tail;
 
-  struct UDPMessageWrapper *ipv6_queue_head;
-  struct UDPMessageWrapper *ipv6_queue_tail;
+  struct UDP_MessageWrapper *ipv6_queue_head;
+  struct UDP_MessageWrapper *ipv6_queue_tail;
 };
 
 

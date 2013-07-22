@@ -297,11 +297,6 @@ struct GNUNET_SERVER_Client
   int receive_pending;
 
   /**
-   * Finish pending write when disconnecting?
-   */
-  int finish_pending_write;
-
-  /**
    * Persist the file handle for this client no matter what happens,
    * force the OS to close once the process actually dies.  Should only
    * be used in special cases!
@@ -334,43 +329,6 @@ process_listen_socket (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 
 
 /**
- * Add a listen task with the scheduler for this server.
- *
- * @param server handle to our server for which we are adding the listen
- *        socket
- */
-static void
-schedule_listen_task (struct GNUNET_SERVER_Handle *server)
-{
-  struct GNUNET_NETWORK_FDSet *r;
-  unsigned int i;
-
-  if (NULL == server->listen_sockets[0])
-    return; /* nothing to do, no listen sockets! */
-  if (NULL == server->listen_sockets[1])
-  {
-    /* simplified method: no fd set needed; this is then much simpler and
-       much more efficient */
-    server->listen_task =
-      GNUNET_SCHEDULER_add_read_net_with_priority (GNUNET_TIME_UNIT_FOREVER_REL,
-						   GNUNET_SCHEDULER_PRIORITY_HIGH,
-						   server->listen_sockets[0],
-						   &process_listen_socket, server);
-    return;
-  }
-  r = GNUNET_NETWORK_fdset_create ();
-  i = 0;
-  while (NULL != server->listen_sockets[i])
-    GNUNET_NETWORK_fdset_set (r, server->listen_sockets[i++]);
-  server->listen_task =
-    GNUNET_SCHEDULER_add_select (GNUNET_SCHEDULER_PRIORITY_HIGH,
-				 GNUNET_TIME_UNIT_FOREVER_REL, r, NULL,
-				 &process_listen_socket, server);
-  GNUNET_NETWORK_fdset_destroy (r);
-}
-
-
-/**
  * Scheduler says our listen socket is ready.  Process it!
  *
  * @param cls handle to our server for which we are processing the listen
@@ -389,7 +347,7 @@ process_listen_socket (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
   if (0 != (tc->reason & GNUNET_SCHEDULER_REASON_SHUTDOWN))
   {
     /* ignore shutdown, someone else will take care of it! */
-    schedule_listen_task (server);
+    GNUNET_SERVER_resume (server);
     return;
   }
   i = 0;
@@ -412,7 +370,7 @@ process_listen_socket (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
     i++;
   }
   /* listen for more! */
-  schedule_listen_task (server);
+  GNUNET_SERVER_resume (server);
 }
 
 
@@ -426,7 +384,6 @@ process_listen_socket (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 static struct GNUNET_NETWORK_Handle *
 open_listen_socket (const struct sockaddr *serverAddr, socklen_t socklen)
 {
-  static int on = 1;
   struct GNUNET_NETWORK_Handle *sock;
   uint16_t port;
   int eno;
@@ -454,20 +411,6 @@ open_listen_socket (const struct sockaddr *serverAddr, socklen_t socklen)
     errno = 0;
     return NULL;
   }
-  if (0 != port)
-  {
-    if (GNUNET_NETWORK_socket_setsockopt
-        (sock, SOL_SOCKET, SO_REUSEADDR, &on, sizeof (on)) != GNUNET_OK)
-      LOG_STRERROR (GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
-                    "setsockopt");
-#ifdef IPV6_V6ONLY
-    if ((AF_INET6 == serverAddr->sa_family) &&
-        (GNUNET_NETWORK_socket_setsockopt
-         (sock, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof (on)) != GNUNET_OK))
-      LOG_STRERROR (GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
-                    "setsockopt");
-#endif
-  }
   /* bind the socket */
   if (GNUNET_OK != GNUNET_NETWORK_socket_bind (sock, serverAddr, socklen))
   {
@@ -493,10 +436,17 @@ open_listen_socket (const struct sockaddr *serverAddr, socklen_t socklen)
              "bind", port,
              (AF_INET == serverAddr->sa_family) ? "IPv4" : "IPv6");
       else if (AF_UNIX == serverAddr->sa_family)
-        LOG (GNUNET_ERROR_TYPE_WARNING,
-             _("`%s' failed for `%s': address already in use\n"), "bind",
-             ((const struct sockaddr_un *) serverAddr)->sun_path);
+      {
+	const struct sockaddr_un *un = (const struct sockaddr_un *) serverAddr;
+	unsigned int off = 0;
 
+	if ('\0' == un->sun_path[0])
+	  off = 1; /* some UNIXPATHs start with 0 */
+        LOG (GNUNET_ERROR_TYPE_WARNING,
+             _("`%s' failed for `%.*s': address already in use\n"), "bind",
+	     (int) ((sizeof (un->sun_path) - off)),
+	     (&un->sun_path[off]));
+      }
     }
     GNUNET_break (GNUNET_OK == GNUNET_NETWORK_socket_close (sock));
     errno = eno;
@@ -544,7 +494,7 @@ GNUNET_SERVER_create_with_sockets (GNUNET_CONNECTION_AccessCheck access,
   server->access_cls = access_cls;
   server->require_found = require_found;
   if (NULL != lsocks)
-    schedule_listen_task (server);
+    GNUNET_SERVER_resume (server);
   return server;
 }
 
@@ -675,6 +625,60 @@ test_monitor_clients (struct GNUNET_SERVER_Handle *server)
   server->in_soft_shutdown = GNUNET_SYSERR;
   GNUNET_SCHEDULER_add_continuation (&do_destroy, server,
 				     GNUNET_SCHEDULER_REASON_PREREQ_DONE);
+}
+
+
+/**
+ * Suspend accepting connections from the listen socket temporarily.
+ *
+ * @param server server to stop accepting connections.
+ */
+void
+GNUNET_SERVER_suspend (struct GNUNET_SERVER_Handle *server)
+{
+  if (GNUNET_SCHEDULER_NO_TASK != server->listen_task)
+  {
+    GNUNET_SCHEDULER_cancel (server->listen_task);
+    server->listen_task = GNUNET_SCHEDULER_NO_TASK;
+  }
+}
+
+
+/**
+ * Resume accepting connections from the listen socket.
+ *
+ * @param server server to stop accepting connections.
+ */
+void
+GNUNET_SERVER_resume (struct GNUNET_SERVER_Handle *server)
+{
+  struct GNUNET_NETWORK_FDSet *r;
+  unsigned int i;
+
+  if (NULL == server->listen_sockets)
+    return;
+  if (NULL == server->listen_sockets[0])
+    return; /* nothing to do, no listen sockets! */
+  if (NULL == server->listen_sockets[1])
+  {
+    /* simplified method: no fd set needed; this is then much simpler and
+       much more efficient */
+    server->listen_task =
+      GNUNET_SCHEDULER_add_read_net_with_priority (GNUNET_TIME_UNIT_FOREVER_REL,
+						   GNUNET_SCHEDULER_PRIORITY_HIGH,
+						   server->listen_sockets[0],
+						   &process_listen_socket, server);
+    return;
+  }
+  r = GNUNET_NETWORK_fdset_create ();
+  i = 0;
+  while (NULL != server->listen_sockets[i])
+    GNUNET_NETWORK_fdset_set (r, server->listen_sockets[i++]);
+  server->listen_task =
+    GNUNET_SCHEDULER_add_select (GNUNET_SCHEDULER_PRIORITY_HIGH,
+				 GNUNET_TIME_UNIT_FOREVER_REL, r, NULL,
+				 &process_listen_socket, server);
+  GNUNET_NETWORK_fdset_destroy (r);
 }
 
 
@@ -823,11 +827,9 @@ warn_no_receive_done (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
                                     &warn_no_receive_done, client);
   if (0 == (GNUNET_SCHEDULER_REASON_SHUTDOWN & tc->reason))
     LOG (GNUNET_ERROR_TYPE_WARNING,
-         _
-         ("Processing code for message of type %u did not call GNUNET_SERVER_receive_done after %llums\n"),
+         _("Processing code for message of type %u did not call `GNUNET_SERVER_receive_done' after %s\n"),
          (unsigned int) client->warn_type,
-         (unsigned long long)
-         GNUNET_TIME_absolute_get_duration (client->warn_start).rel_value);
+         GNUNET_STRINGS_relative_time_to_string (GNUNET_TIME_absolute_get_duration (client->warn_start), GNUNET_YES));
 }
 
 

@@ -43,6 +43,11 @@ static struct GNUNET_SERVER_Client *my_client;
 
 
 /**
+ * Handle to address subsystem
+ */
+static struct GAS_Addresses_Handle *address_handle;
+
+/**
  * Register a new scheduling client.
  *
  * @param client handle of the new client
@@ -74,7 +79,7 @@ GAS_scheduling_remove_client (struct GNUNET_SERVER_Client *client)
 {
   if (my_client != client)
     return;
-  GAS_addresses_destroy_all ();
+  GAS_addresses_destroy_all (address_handle);
   my_client = NULL;
 }
 
@@ -166,10 +171,8 @@ GAS_handle_request_address (void *cls, struct GNUNET_SERVER_Client *client,
 
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Received `%s' message\n",
               "REQUEST_ADDRESS");
-  GNUNET_STATISTICS_update (GSA_stats, "# address requests received", 1,
-                            GNUNET_NO);
   GNUNET_break (0 == ntohl (msg->reserved));
-  GAS_addresses_request_address (&msg->peer);
+  GAS_addresses_request_address (address_handle, &msg->peer);
   GNUNET_SERVER_receive_done (client, GNUNET_OK);
 }
 
@@ -193,7 +196,7 @@ GAS_handle_request_address_cancel (void *cls,
               "REQUEST_ADDRESS_CANCEL");
   GNUNET_break (0 == ntohl (msg->reserved));
 
-  /* TODO */
+  GAS_addresses_request_address_cancel (address_handle, &msg->peer);
 
   GNUNET_SERVER_receive_done (client, GNUNET_OK);
 }
@@ -215,10 +218,66 @@ GAS_handle_reset_backoff (void *cls,
 
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Received `%s' message\n",
               "RESET_BACKOFF");
-  GNUNET_STATISTICS_update (GSA_stats, "# backoff reset requests received", 1,
-                            GNUNET_NO);
   GNUNET_break (0 == ntohl (msg->reserved));
-  GAS_addresses_handle_backoff_reset (&msg->peer);
+  GAS_addresses_handle_backoff_reset (address_handle, &msg->peer);
+  GNUNET_SERVER_receive_done (client, GNUNET_OK);
+}
+
+/**
+ * Handle 'address add' messages from clients.
+ *
+ * @param cls unused, NULL
+ * @param client client that sent the request
+ * @param message the request message
+ */
+void
+GAS_handle_address_add (void *cls, struct GNUNET_SERVER_Client *client,
+                        const struct GNUNET_MessageHeader *message)
+{
+  const struct AddressUpdateMessage *m;
+  const struct GNUNET_ATS_Information *atsi;
+  const char *address;
+  const char *plugin_name;
+  uint16_t address_length;
+  uint16_t plugin_name_length;
+  uint32_t ats_count;
+  uint16_t size;
+
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Received `%s' message\n",
+              "ADDRESS_ADD");
+  size = ntohs (message->size);
+  if (size < sizeof (struct AddressUpdateMessage))
+  {
+    GNUNET_break (0);
+    GNUNET_SERVER_receive_done (client, GNUNET_SYSERR);
+    return;
+  }
+  m = (const struct AddressUpdateMessage *) message;
+  ats_count = ntohl (m->ats_count);
+  address_length = ntohs (m->address_length);
+  plugin_name_length = ntohs (m->plugin_name_length);
+  atsi = (const struct GNUNET_ATS_Information *) &m[1];
+  address = (const char *) &atsi[ats_count];
+  if (plugin_name_length != 0)
+    plugin_name = &address[address_length];
+  else
+    plugin_name = "";
+
+  if ((address_length + plugin_name_length +
+       ats_count * sizeof (struct GNUNET_ATS_Information) +
+       sizeof (struct AddressUpdateMessage) != ntohs (message->size)) ||
+      (ats_count >
+       GNUNET_SERVER_MAX_MESSAGE_SIZE / sizeof (struct GNUNET_ATS_Information)) ||
+       ((plugin_name_length > 0) && (plugin_name[plugin_name_length - 1] != '\0')))
+  {
+    GNUNET_break (0);
+    GNUNET_SERVER_receive_done (client, GNUNET_SYSERR);
+    return;
+  }
+  GNUNET_STATISTICS_update (GSA_stats, "# address updates received", 1,
+                            GNUNET_NO);
+  GAS_addresses_add (address_handle, &m->peer, plugin_name, address, address_length,
+                        ntohl (m->session_id), atsi, ats_count);
   GNUNET_SERVER_receive_done (client, GNUNET_OK);
 }
 
@@ -276,7 +335,7 @@ GAS_handle_address_update (void *cls, struct GNUNET_SERVER_Client *client,
   }
   GNUNET_STATISTICS_update (GSA_stats, "# address updates received", 1,
                             GNUNET_NO);
-  GAS_addresses_update (&m->peer, plugin_name, address, address_length,
+  GAS_addresses_update (address_handle, &m->peer, plugin_name, address, address_length,
                         ntohl (m->session_id), atsi, ats_count);
   GNUNET_SERVER_receive_done (client, GNUNET_OK);
 }
@@ -332,12 +391,13 @@ GAS_handle_address_in_use (void *cls, struct GNUNET_SERVER_Client *client,
   }
 
   in_use = ntohs (m->in_use);
-  res = GAS_addresses_in_use (&m->peer,
-                             plugin_name,
-                             address,
-                             address_length,
-                             ntohl (m->session_id),
-                             in_use);
+  res = GAS_addresses_in_use (address_handle,
+                              &m->peer,
+                              plugin_name,
+                              address,
+                              address_length,
+                              ntohl (m->session_id),
+                              in_use);
 
   if (res == GNUNET_OK)
     GNUNET_SERVER_receive_done (client, GNUNET_OK);
@@ -402,7 +462,8 @@ GAS_handle_address_destroyed (void *cls, struct GNUNET_SERVER_Client *client,
     return;
   }
   GNUNET_STATISTICS_update (GSA_stats, "# addresses destroyed", 1, GNUNET_NO);
-  GAS_addresses_destroy (&m->peer, plugin_name, address, address_length,
+  GAS_addresses_destroy (address_handle, &m->peer, plugin_name,
+                         address, address_length,
                          ntohl (m->session_id));
   if (0 != ntohl (m->session_id))
   {
@@ -421,10 +482,12 @@ GAS_handle_address_destroyed (void *cls, struct GNUNET_SERVER_Client *client,
  * Initialize scheduling subsystem.
  *
  * @param server handle to our server
+ * @param ah the address handle to use
  */
 void
-GAS_scheduling_init (struct GNUNET_SERVER_Handle *server)
+GAS_scheduling_init (struct GNUNET_SERVER_Handle *server, struct GAS_Addresses_Handle *ah)
 {
+  address_handle = ah;
   nc = GNUNET_SERVER_notification_context_create (server, 128);
 }
 

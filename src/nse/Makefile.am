@@ -11,6 +11,8 @@ endif
 
 pkgcfgdir= $(pkgdatadir)/config.d/
 
+libexecdir= $(pkglibdir)/libexec/
+
 pkgcfg_DATA = \
   nse.conf
 
@@ -27,19 +29,19 @@ libgnunetnse_la_LDFLAGS = \
   -version-info 0:0:0
 
 
-bin_PROGRAMS = \
+libexec_PROGRAMS = \
  gnunet-service-nse 
 
 noinst_PROGRAMS = \
  gnunet-nse-profiler
 
 gnunet_nse_profiler_SOURCES = \
- gnunet-nse-profiler.c         
+ gnunet-nse-profiler.c
 gnunet_nse_profiler_LDADD = -lm \
   $(top_builddir)/src/nse/libgnunetnse.la \
   $(top_builddir)/src/util/libgnunetutil.la \
   $(top_builddir)/src/statistics/libgnunetstatistics.la \
-  $(top_builddir)/src/testing/libgnunettesting.la \
+  $(top_builddir)/src/testbed/libgnunettestbed.la \
   $(GN_LIBINTL)
 gnunet_nse_profiler_DEPENDENCIES = \
   libgnunetnse.la				 
@@ -73,6 +75,7 @@ test_nse_api_SOURCES = \
  test_nse_api.c
 test_nse_api_LDADD = \
   $(top_builddir)/src/nse/libgnunetnse.la \
+  $(top_builddir)/src/testing/libgnunettesting.la \
   $(top_builddir)/src/util/libgnunetutil.la 
 
 test_nse_multipeer_SOURCES = \
@@ -80,7 +83,7 @@ test_nse_multipeer_SOURCES = \
 test_nse_multipeer_LDADD = \
   $(top_builddir)/src/nse/libgnunetnse.la \
   $(top_builddir)/src/util/libgnunetutil.la \
-  $(top_builddir)/src/testing/libgnunettesting.la \
+  $(top_builddir)/src/testbed/libgnunettestbed.la \
   -lm
 
 EXTRA_DIST = \

@@ -83,11 +83,37 @@ static const char *sbin_iptables;
 struct in6_ifreq
 {
   struct in6_addr ifr6_addr;
-  __u32 ifr6_prefixlen;
+  uint32_t ifr6_prefixlen; /* __u32 in the original */
   int ifr6_ifindex;
 };
 #endif
 
+
+/**
+ * Open '/dev/null' and make the result the given
+ * file descriptor.
+ *
+ * @param target_fd desired FD to point to /dev/null
+ * @param flags open flags (O_RDONLY, O_WRONLY)
+ */
+static void
+open_dev_null (int target_fd,
+	       int flags)
+{
+  int fd;
+
+  fd = open ("/dev/null", flags);
+  if (-1 == fd)
+    abort ();
+  if (fd == target_fd)
+    return;
+  if (-1 == dup2 (fd, target_fd))
+  {    
+    (void) close (fd);
+    abort ();
+  }
+  (void) close (fd);
+}
 
 
 /**
@@ -119,7 +145,9 @@ fork_and_exec (const char *file,
     /* close stdin/stdout to not cause interference
        with the helper's main protocol! */
     (void) close (0); 
+    open_dev_null (0, O_RDONLY);
     (void) close (1); 
+    open_dev_null (1, O_WRONLY);
     (void) execv (file, cmd);
     /* can only get here on error */
     fprintf (stderr, 
@@ -760,7 +788,7 @@ main (int argc, char **argv)
   run (fd_tun);
   global_ret = 0;
  cleanup:
-  close (fd_tun);
+  (void) close (fd_tun);
   return global_ret;
 }
 

@@ -46,28 +46,23 @@ enum GNUNET_STREAM_Status
     /**
      * All previous read/write operations are successfully done
      */
-    GNUNET_STREAM_OK = 0,
+    GNUNET_STREAM_OK,
 
     /**
      * A timeout occured while reading/writing the stream
      */
-    GNUNET_STREAM_TIMEOUT = 1,
+    GNUNET_STREAM_TIMEOUT,
 
     /**
      * Other side has shutdown the socket for this type of operation
      * (reading/writing)
      */
-    GNUNET_STREAM_SHUTDOWN = 2,
+    GNUNET_STREAM_SHUTDOWN,
 
     /**
      * A serious error occured while operating on this stream
      */
-    GNUNET_STREAM_SYSERR = 3,
-    
-    /**
-     * An error resulted in an unusable stream
-     */
-    GNUNET_STREAM_BROKEN
+    GNUNET_STREAM_SYSERR
   };
 
 /**
@@ -83,6 +78,13 @@ struct GNUNET_STREAM_Socket;
  */
 typedef void (*GNUNET_STREAM_OpenCallback) (void *cls,
 					    struct GNUNET_STREAM_Socket *socket);
+
+
+/**
+ * Callback for signalling stream listen success; See
+ * GNUNET_STREAM_OPTION_SIGNAL_LISTEN_SUCCESS
+ */
+typedef void (*GNUNET_STREAM_ListenSuccessCallback) (void);
 
 
 /**
@@ -103,7 +105,32 @@ enum GNUNET_STREAM_Option
      * of '0' means to use the round-trip time (plus a tiny grace period);
      * this is also the default.
      */
-    GNUNET_STREAM_OPTION_INITIAL_RETRANSMIT_TIMEOUT
+    GNUNET_STREAM_OPTION_INITIAL_RETRANSMIT_TIMEOUT,
+
+    /**
+     * Option to set the write sequence number. Takes a uint32_t as parameter
+     * to set the value of the write sequence number
+     */
+    GNUNET_STREAM_OPTION_TESTING_SET_WRITE_SEQUENCE_NUMBER,
+
+    /**
+     * Listen socket timeout in milliseconds given as uint32_t
+     */
+    GNUNET_STREAM_OPTION_LISTEN_TIMEOUT,
+
+    /**
+     * Option to register a callback when stream listening is successfull. Takes
+     * parameter of the form GNUNET_STREAM_ListenSuccessCallback. The callback
+     * is only called if listening is successful
+     */
+    GNUNET_STREAM_OPTION_SIGNAL_LISTEN_SUCCESS,
+
+    /**
+     * Option to set the maximum payload size in bytes of a stream data
+     * packets. Takes an uint16_t as argument. Note that this should be less
+     * than 64000 and cannot be zero. Default is 64000 bytes.
+     */
+    GNUNET_STREAM_OPTION_MAX_PAYLOAD_SIZE
   };
 
 
@@ -114,7 +141,8 @@ enum GNUNET_STREAM_Option
  * @param target the target peer to which the stream has to be opened
  * @param app_port the application port number which uniquely identifies this
  *            stream
- * @param open_cb this function will be called after stream has be established 
+ * @param open_cb this function will be called after stream has be established;
+ *          cannot be NULL
  * @param open_cb_cls the closure for open_cb
  * @param ... options to the stream, terminated by GNUNET_STREAM_OPTION_END
  * @return if successful it returns the stream socket; NULL if stream cannot be
@@ -164,7 +192,10 @@ GNUNET_STREAM_shutdown (struct GNUNET_STREAM_Socket *socket,
 
 
 /**
- * Cancels a pending shutdown
+ * Cancels a pending shutdown. Note that the shutdown messages may already
+ * be sent and the stream is shutdown already for the operation given to
+ * GNUNET_STREAM_shutdown(). This function only clears up any retranmissions of
+ * shutdown messages and frees the shutdown handle.
  *
  * @param handle the shutdown handle returned from GNUNET_STREAM_shutdown
  */
@@ -174,7 +205,7 @@ GNUNET_STREAM_shutdown_cancel (struct GNUNET_STREAM_ShutdownHandle *handle);
 
 /**
  * Closes the stream and frees the associated state. The stream should be
- * shutdown before closing.
+ * shutdown for both reading and writing before closing.
  *
  * @param socket the stream socket
  */
@@ -184,11 +215,13 @@ GNUNET_STREAM_close (struct GNUNET_STREAM_Socket *socket);
 
 /**
  * Functions of this type are called upon new stream connection from other peers
+ * or upon binding error which happen when the app_port given in
+ * GNUNET_STREAM_listen() is already taken.
  *
  * @param cls the closure from GNUNET_STREAM_listen
- * @param socket the socket representing the stream
+ * @param socket the socket representing the stream; NULL on binding error
  * @param initiator the identity of the peer who wants to establish a stream
- *            with us
+ *            with us; NULL on binding error
  * @return GNUNET_OK to keep the socket open, GNUNET_SYSERR to close the
  *             stream (the socket will be invalid after the call)
  */
@@ -207,17 +240,22 @@ struct GNUNET_STREAM_ListenSocket;
  * Listens for stream connections for a specific application ports
  *
  * @param cfg the configuration to use
- * @param app_port the application port for which new streams will be accepted
+ * @param app_port the application port for which new streams will be
+ *         accepted. If another stream is listening on the same port the
+ *         listen_cb will be called to signal binding error and the returned
+ *         ListenSocket will be invalidated.
  * @param listen_cb this function will be called when a peer tries to establish
  *            a stream with us
  * @param listen_cb_cls closure for listen_cb
+ * @param ... options to the stream, terminated by GNUNET_STREAM_OPTION_END
  * @return listen socket, NULL for any error
  */
 struct GNUNET_STREAM_ListenSocket *
 GNUNET_STREAM_listen (const struct GNUNET_CONFIGURATION_Handle *cfg,
                       GNUNET_MESH_ApplicationType app_port,
                       GNUNET_STREAM_ListenCallback listen_cb,
-                      void *listen_cb_cls);
+                      void *listen_cb_cls,
+                      ...);
 
 
 /**
@@ -234,7 +272,14 @@ GNUNET_STREAM_listen_close (struct GNUNET_STREAM_ListenSocket *lsocket);
  * on a stream are executed
  *
  * @param cls the closure from GNUNET_STREAM_write
- * @param status the status of the stream at the time this function is called
+ * @param status the status of the stream at the time this function is called;
+ *          GNUNET_STREAM_OK if writing to stream was completed successfully;
+ *          GNUNET_STREAM_TIMEOUT if the given data is not sent successfully
+ *          (this doesn't mean that the data is never sent, the receiver may
+ *          have read the data but its ACKs may have been lost);
+ *          GNUNET_STREAM_SHUTDOWN if the stream is shutdown for writing in the
+ *          mean time; GNUNET_STREAM_SYSERR if the stream is broken and cannot
+ *          be processed.
  * @param size the number of bytes written
  */
 typedef void (*GNUNET_STREAM_CompletionContinuation) (void *cls,
@@ -246,17 +291,17 @@ typedef void (*GNUNET_STREAM_CompletionContinuation) (void *cls,
 /**
  * Handle to cancel IO write operations.
  */
-struct GNUNET_STREAM_IOWriteHandle;
+struct GNUNET_STREAM_WriteHandle;
 
 
 /**
  * Handle to cancel IO read operations.
  */
-struct GNUNET_STREAM_IOReadHandle;
+struct GNUNET_STREAM_ReadHandle;
 
 /**
  * Tries to write the given data to the stream. The maximum size of data that
- * can be written as part of a write operation is (64 * (64000 - sizeof (struct
+ * can be written per a write operation is ~ 4MB (64 * (64000 - sizeof (struct
  * GNUNET_STREAM_DataMessage))). If size is greater than this it is not an API
  * violation, however only the said number of maximum bytes will be written.
  *
@@ -268,11 +313,12 @@ struct GNUNET_STREAM_IOReadHandle;
  *          stream 
  * @param write_cont_cls the closure
  *
- * @return handle to cancel the operation; if a previous write is pending or
- *           the stream has been shutdown for this operation then write_cont is
- *           immediately called and NULL is returned.
+ * @return handle to cancel the operation; if a previous write is pending NULL
+ *           is returned. If the stream has been shutdown for this operation or
+ *           is broken then write_cont is immediately called and NULL is
+ *           returned.
  */
-struct GNUNET_STREAM_IOWriteHandle *
+struct GNUNET_STREAM_WriteHandle *
 GNUNET_STREAM_write (struct GNUNET_STREAM_Socket *socket,
                      const void *data,
                      size_t size,
@@ -299,18 +345,20 @@ typedef size_t (*GNUNET_STREAM_DataProcessor) (void *cls,
 
 
 /**
- * Tries to read data from the stream.
+ * Tries to read data from the stream. Should not be called when another read
+ * handle is present; the existing read handle should be canceled with
+ * GNUNET_STREAM_read_cancel(). Only one read handle per socket is present at
+ * any time
  *
  * @param socket the socket representing a stream
  * @param timeout the timeout period
  * @param proc function to call with data (once only)
  * @param proc_cls the closure for proc
- *
- * @return handle to cancel the operation; if the stream has been shutdown for
- *           this type of opeartion then the DataProcessor is immediately
- *           called with GNUNET_STREAM_SHUTDOWN as status and NULL if returned
+ * @return handle to cancel the operation; NULL is returned if the stream has
+ *           been shutdown for this type of opeartion (the DataProcessor is
+ *           immediately called with GNUNET_STREAM_SHUTDOWN as status)
  */
-struct GNUNET_STREAM_IOReadHandle *
+struct GNUNET_STREAM_ReadHandle *
 GNUNET_STREAM_read (struct GNUNET_STREAM_Socket *socket,
                     struct GNUNET_TIME_Relative timeout,
 		    GNUNET_STREAM_DataProcessor proc,
@@ -332,19 +380,19 @@ GNUNET_STREAM_read (struct GNUNET_STREAM_Socket *socket,
  * used before shutting down transmission from our side or before closing the
  * socket.
  *
- * @param ioh handle to operation to cancel
+ * @param wh write operation handle to cancel
  */
 void
-GNUNET_STREAM_io_write_cancel (struct GNUNET_STREAM_IOWriteHandle *iowh);
+GNUNET_STREAM_write_cancel (struct GNUNET_STREAM_WriteHandle *wh);
 
 
 /**
  * Cancel pending read operation.
  *
- * @param ioh handle to operation to cancel
+ * @param rh read operation handle to cancel
  */
 void
-GNUNET_STREAM_io_read_cancel (struct GNUNET_STREAM_IOReadHandle *iorh);
+GNUNET_STREAM_read_cancel (struct GNUNET_STREAM_ReadHandle *rh);
 
 
 #if 0

@@ -21,12 +21,14 @@
  * @author Bartlomiej Polot
  *
  * STRUCTURE:
- * - CONSTANTS
  * - DATA STRUCTURES
+ * - DECLARATIONS
  * - AUXILIARY FUNCTIONS
  * - RECEIVE HANDLERS
  * - SEND FUNCTIONS
  * - API CALL DEFINITIONS
+ *
+ * TODO: add regex to reconnect
  */
 #include "platform.h"
 #include "gnunet_common.h"
@@ -39,6 +41,7 @@
 
 #define LOG(kind,...) GNUNET_log_from (kind, "mesh-api",__VA_ARGS__)
 
+#define DEBUG_ACK GNUNET_YES
 
 /******************************************************************************/
 /************************      DATA STRUCTURES     ****************************/
@@ -92,12 +95,6 @@ struct GNUNET_MESH_TransmitHandle
   GNUNET_SCHEDULER_TaskIdentifier timeout_task;
 
     /**
-     * Priority of the message.  The queue is sorted by priority,
-     * control messages have the maximum priority (UINT32_MAX).
-     */
-  uint32_t priority;
-
-    /**
      * Target of the message, 0 for multicast.  This field
      * is only valid if 'notify' is non-NULL.
      */
@@ -135,9 +132,13 @@ struct GNUNET_MESH_Handle
   const GNUNET_MESH_ApplicationType *applications;
 
     /**
-     * Double linked list of the tunnels this client is connected to.
+     * Double linked list of the tunnels this client is connected to, head.
      */
   struct GNUNET_MESH_Tunnel *tunnels_head;
+
+    /**
+     * Double linked list of the tunnels this client is connected to, tail.
+     */
   struct GNUNET_MESH_Tunnel *tunnels_tail;
 
     /**
@@ -161,29 +162,35 @@ struct GNUNET_MESH_Handle
   void *cls;
 
     /**
-     * Messages to send to the service
+     * Messages to send to the service, head.
      */
   struct GNUNET_MESH_TransmitHandle *th_head;
+
+    /**
+     * Messages to send to the service, tail.
+     */
   struct GNUNET_MESH_TransmitHandle *th_tail;
 
     /**
      * tid of the next tunnel to create (to avoid reusing IDs often)
      */
   MESH_TunnelNumber next_tid;
+
+    /**
+     * Number of handlers in the handlers array.
+     */
   unsigned int n_handlers;
+
+    /**
+     * Number of applications in the applications array.
+     */
   unsigned int n_applications;
-  unsigned int max_queue_size;
 
     /**
      * Have we started the task to receive messages from the service
      * yet? We do this after we send the 'MESH_LOCAL_CONNECT' message.
      */
   int in_receive;
-
-    /**
-     * Number of packets queued
-     */
-  unsigned int npackets;
 
   /**
    * Configuration given by the client, in case of reconnection
@@ -199,6 +206,41 @@ struct GNUNET_MESH_Handle
    * Task for trying to reconnect.
    */
   GNUNET_SCHEDULER_TaskIdentifier reconnect_task;
+
+  /**
+   * Monitor callback
+   */
+  GNUNET_MESH_TunnelsCB tunnels_cb;
+
+  /**
+   * Monitor callback closure.
+   */
+  void *tunnels_cls;
+
+  /**
+   * Tunnel callback.
+   */
+  GNUNET_MESH_TunnelCB tunnel_cb;
+
+  /**
+   * Tunnel callback closure.
+   */
+  void *tunnel_cls;
+
+  /**
+   * All the peer in the tunnel so far.
+   */
+  struct GNUNET_PeerIdentity *peers;
+
+  /**
+   * How many peers we have in this tunnel so far.
+   */
+  unsigned int tunnel_npeers;
+
+#if DEBUG_ACK
+  unsigned int acks_sent;
+  unsigned int acks_recv;
+#endif
 };
 
 
@@ -232,9 +274,13 @@ struct GNUNET_MESH_Tunnel
 {
 
     /**
-     * DLL
+     * DLL next
      */
   struct GNUNET_MESH_Tunnel *next;
+
+    /**
+     * DLL prev
+     */
   struct GNUNET_MESH_Tunnel *prev;
 
     /**
@@ -288,21 +334,116 @@ struct GNUNET_MESH_Tunnel
   unsigned int npeers;
 
     /**
-     * Number of packets queued in this tunnel
+     * Size of packet queued in this tunnel
      */
-  unsigned int npackets;
+  unsigned int packet_size;
 
     /**
      * Number of applications requested this tunnel
      */
   unsigned int napps;
 
+    /**
+     * Is the tunnel throttled to the slowest peer?
+     */
+  int speed_min;
+
+    /**
+     * Is the tunnel allowed to buffer?
+     */
+  int buffering;
+
+    /**
+     * Next packet ID to send.
+     */
+  uint32_t next_send_pid;
+
+    /**
+     * Maximum allowed PID to send (ACK recevied).
+     */
+  uint32_t max_send_pid;
+
+    /**
+     * Last pid received from the service.
+     */
+  uint32_t last_recv_pid;
+
+  /**
+   * Which ACK value have we last sent to the service?
+   */
+  uint32_t max_recv_pid;
 };
+
+
+/******************************************************************************/
+/***********************         DECLARATIONS         *************************/
+/******************************************************************************/
+
+/**
+ * Function called to send a message to the service.
+ * "buf" will be NULL and "size" zero if the socket was closed for writing in
+ * the meantime.
+ *
+ * @param cls closure, the mesh handle
+ * @param size number of bytes available in buf
+ * @param buf where the callee should write the connect message
+ * @return number of bytes written to buf
+ */
+static size_t
+send_callback (void *cls, size_t size, void *buf);
 
 
 /******************************************************************************/
 /***********************     AUXILIARY FUNCTIONS      *************************/
 /******************************************************************************/
+
+/**
+ * Check if transmission is a payload packet.
+ *
+ * @param th Transmission handle.
+ *
+ * @return GNUNET_YES if it is a payload packet,
+ *         GNUNET_NO if it is a mesh management packet.
+ */
+static int
+th_is_payload (struct GNUNET_MESH_TransmitHandle *th)
+{
+  return (th->notify != NULL) ? GNUNET_YES : GNUNET_NO;
+}
+
+
+/**
+ * Check whether there is any message ready in the queue and find the size.
+ * 
+ * @param h Mesh handle.
+ * 
+ * @return The size of the first ready message in the queue,
+ *         0 if there is none.
+ */
+static size_t
+message_ready_size (struct GNUNET_MESH_Handle *h)
+{
+  struct GNUNET_MESH_TransmitHandle *th;
+  struct GNUNET_MESH_Tunnel *t;
+
+  for (th = h->th_head; NULL != th; th = th->next)
+  {
+    t = th->tunnel;
+    if (GNUNET_NO == th_is_payload (th))
+    {
+      LOG (GNUNET_ERROR_TYPE_DEBUG, "  message internal\n");
+      return th->size;
+    }
+    if (GNUNET_NO == GMC_is_pid_bigger(t->next_send_pid, t->max_send_pid))
+    {
+      LOG (GNUNET_ERROR_TYPE_DEBUG, "  message payload ok (%u <= %u)\n",
+           t->next_send_pid, t->max_send_pid);
+      return th->size;
+    }
+  }
+  return 0;
+}
+
 
 /**
  * Get the tunnel handler for the tunnel specified by id from the given handle
@@ -354,6 +495,9 @@ create_tunnel (struct GNUNET_MESH_Handle *h, MESH_TunnelNumber tid)
   {
     t->tid = tid;
   }
+  t->max_send_pid = INITIAL_WINDOW_SIZE - 1;
+  t->last_recv_pid = (uint32_t) -1;
+  t->buffering = GNUNET_YES;
   return t;
 }
 
@@ -378,6 +522,8 @@ destroy_tunnel (struct GNUNET_MESH_Tunnel *t, int call_cleaner)
   struct GNUNET_MESH_TransmitHandle *th;
   struct GNUNET_MESH_TransmitHandle *next;
   unsigned int i;
+
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "destroy_tunnel %X\n", t->tid);
 
   if (NULL == t)
   {
@@ -411,7 +557,7 @@ destroy_tunnel (struct GNUNET_MESH_Tunnel *t, int call_cleaner)
       continue;
     /* Clients should have aborted their requests already.
      * Management traffic should be ok, as clients can't cancel that */
-    GNUNET_break (NULL == th->notify);
+    GNUNET_break (GNUNET_NO == th_is_payload(th));
     GNUNET_CONTAINER_DLL_remove (h->th_head, h->th_tail, th);
 
     /* clean up request */
@@ -422,7 +568,7 @@ destroy_tunnel (struct GNUNET_MESH_Tunnel *t, int call_cleaner)
 
   /* if there are no more pending requests with mesh service, cancel active request */
   /* Note: this should be unnecessary... */
-  if ( (NULL == h->th_head) && (NULL != h->th))
+  if ((0 == message_ready_size (h)) && (NULL != h->th))
   {
     GNUNET_CLIENT_notify_transmit_ready_cancel (h->th);
     h->th = NULL;
@@ -512,6 +658,7 @@ remove_peer_from_tunnel (struct GNUNET_MESH_Peer *p)
 
 /**
  * Notify client that the transmission has timed out
+ * 
  * @param cls closure
  * @param tc task context
  */
@@ -523,12 +670,13 @@ timeout_transmission (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 
   mesh = th->tunnel->mesh;
   GNUNET_CONTAINER_DLL_remove (mesh->th_head, mesh->th_tail, th);
-  if (th->notify != NULL)
+  th->tunnel->packet_size = 0;
+  if (GNUNET_YES == th_is_payload (th))
     th->notify (th->notify_cls, 0, NULL);
   GNUNET_free (th);
-  if ((NULL == mesh->th_head) && (NULL != mesh->th))
+  if ((0 == message_ready_size (mesh)) && (NULL != mesh->th))
   {
-    /* queue empty, no point in asking for transmission */
+    /* nothing ready to transmit, no point in asking for transmission */
     GNUNET_CLIENT_notify_transmit_ready_cancel (mesh->th);
     mesh->th = NULL;
   }
@@ -536,7 +684,7 @@ timeout_transmission (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 
 
 /**
- * Add a transmit handle to the transmission queue by priority and set the
+ * Add a transmit handle to the transmission queue and set the
  * timeout if needed.
  *
  * @param h mesh handle with the queue head and tail
@@ -546,16 +694,7 @@ static void
 add_to_queue (struct GNUNET_MESH_Handle *h,
               struct GNUNET_MESH_TransmitHandle *th)
 {
-  struct GNUNET_MESH_TransmitHandle *p;
-
-  p = h->th_head;
-  while ((NULL != p) && (th->priority <= p->priority))
-    p = p->next;
-  if (NULL == p)
-    p = h->th_tail;
-  else
-    p = p->prev;
-  GNUNET_CONTAINER_DLL_insert_after (h->th_head, h->th_tail, p, th);
+  GNUNET_CONTAINER_DLL_insert_tail (h->th_head, h->th_tail, th);
   if (GNUNET_TIME_UNIT_FOREVER_ABS.abs_value == th->timeout.abs_value)
     return;
   th->timeout_task =
@@ -577,6 +716,48 @@ static void
 send_packet (struct GNUNET_MESH_Handle *h,
              const struct GNUNET_MessageHeader *msg,
              struct GNUNET_MESH_Tunnel *tunnel);
+
+
+/**
+ * Send an ack on the tunnel to confirm the processing of a message.
+ * 
+ * @param h Mesh handle.
+ * @param t Tunnel on which to send the ACK.
+ */
+static void
+send_ack (struct GNUNET_MESH_Handle *h, struct GNUNET_MESH_Tunnel *t)
+{
+  struct GNUNET_MESH_LocalAck msg;
+  uint32_t delta;
+
+  delta = t->max_recv_pid - t->last_recv_pid;
+  if (delta > ACK_THRESHOLD)
+  {
+    LOG (GNUNET_ERROR_TYPE_DEBUG,
+         "Not sending ACK on tunnel %X: ACK: %u, PID: %u, buffer %u\n",
+         t->tid, t->max_recv_pid, t->last_recv_pid, delta);
+    return;
+  }
+  if (GNUNET_YES == t->buffering)
+    t->max_recv_pid = t->last_recv_pid + INITIAL_WINDOW_SIZE;
+  else
+    t->max_recv_pid = t->last_recv_pid + 1;
+  LOG (GNUNET_ERROR_TYPE_DEBUG,
+       "Sending ACK on tunnel %X: %u\n",
+       t->tid, t->max_recv_pid);
+  msg.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_ACK);
+  msg.header.size = htons (sizeof (msg));
+  msg.tunnel_id = htonl (t->tid);
+  msg.max_pid = htonl (t->max_recv_pid);
+
+#if DEBUG_ACK
+  t->mesh->acks_sent++;
+#endif
+
+  send_packet (h, &msg.header, t);
+  return;
+}
+
 
 
 /**
@@ -620,11 +801,16 @@ send_connect (struct GNUNET_MESH_Handle *h)
     for (napps = 0; napps < h->n_applications; napps++)
     {
       apps[napps] = htonl (h->applications[napps]);
-      LOG (GNUNET_ERROR_TYPE_DEBUG, " app %u\n", h->applications[napps]);
+      LOG (GNUNET_ERROR_TYPE_DEBUG, " app %u\n",
+           h->applications[napps]);
     }
     types = (uint16_t *) & apps[napps];
     for (ntypes = 0; ntypes < h->n_handlers; ntypes++)
+    {
       types[ntypes] = htons (h->message_handlers[ntypes].type);
+      LOG (GNUNET_ERROR_TYPE_DEBUG, " type %u\n",
+           h->message_handlers[ntypes].type);
+    }
     msg->applications = htons (napps);
     msg->types = htons (ntypes);
     LOG (GNUNET_ERROR_TYPE_DEBUG,
@@ -652,8 +838,9 @@ do_reconnect (struct GNUNET_MESH_Handle *h)
   LOG (GNUNET_ERROR_TYPE_DEBUG, "*****************************\n");
   LOG (GNUNET_ERROR_TYPE_DEBUG, "*******   RECONNECT   *******\n");
   LOG (GNUNET_ERROR_TYPE_DEBUG, "*****************************\n");
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "******** on %p *******\n", h);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "*****************************\n");
 
-  h->in_receive = GNUNET_NO;
   /* disconnect */
   if (NULL != h->th)
   {
@@ -675,8 +862,10 @@ do_reconnect (struct GNUNET_MESH_Handle *h)
         GNUNET_TIME_relative_min (GNUNET_TIME_UNIT_SECONDS,
                                   GNUNET_TIME_relative_multiply
                                   (h->reconnect_time, 2));
-    LOG (GNUNET_ERROR_TYPE_DEBUG, "  Next retry in %sms\n",
-         GNUNET_TIME_relative_to_string (h->reconnect_time));
+    LOG (GNUNET_ERROR_TYPE_DEBUG, 
+	 "Next retry in %s\n",
+         GNUNET_STRINGS_relative_time_to_string (h->reconnect_time,
+						 GNUNET_NO));
     GNUNET_break (0);
     return GNUNET_NO;
   }
@@ -699,6 +888,9 @@ do_reconnect (struct GNUNET_MESH_Handle *h)
        */
       continue;
     }
+    t->next_send_pid = 0;
+    t->max_send_pid = INITIAL_WINDOW_SIZE - 1;
+    t->last_recv_pid = (uint32_t) -1;
     tmsg.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_TUNNEL_CREATE);
     tmsg.header.size = htons (sizeof (struct GNUNET_MESH_TunnelMessage));
     tmsg.tunnel_id = htonl (t->tid);
@@ -709,14 +901,13 @@ do_reconnect (struct GNUNET_MESH_Handle *h)
     pmsg.tunnel_id = htonl (t->tid);
 
     /* Reconnect all peers */
-    for (i = 0; i < t->npeers; i++)
+    /* If the tunnel was "by type", dont connect individual peers */
+    for (i = 0; i < t->npeers && 0 == t->napps; i++)
     {
       GNUNET_PEER_resolve (t->peers[i]->id, &pmsg.peer);
       if (NULL != t->disconnect_handler && t->peers[i]->connected)
         t->disconnect_handler (t->cls, &pmsg.peer);
-      /* If the tunnel was "by type", dont connect individual peers */
-      if (0 == t->napps)
-        send_packet (t->mesh, &pmsg.header, t);
+      send_packet (t->mesh, &pmsg.header, t);
     }
     /* Reconnect all types, if any  */
     for (i = 0; i < t->napps; i++)
@@ -729,6 +920,10 @@ do_reconnect (struct GNUNET_MESH_Handle *h)
       msg.type = htonl (t->apps[i]);
       send_packet (t->mesh, &msg.header, t);
     }
+    if (GNUNET_NO == t->buffering)
+      GNUNET_MESH_tunnel_buffer (t, GNUNET_NO);
+    if (GNUNET_YES == t->speed_min)
+      GNUNET_MESH_tunnel_speed_min (t);
   }
   return GNUNET_YES;
 }
@@ -763,6 +958,7 @@ static void
 reconnect (struct GNUNET_MESH_Handle *h)
 {
   LOG (GNUNET_ERROR_TYPE_DEBUG, "Requested RECONNECT\n");
+  h->in_receive = GNUNET_NO;
   if (GNUNET_SCHEDULER_NO_TASK == h->reconnect_task)
     h->reconnect_task = GNUNET_SCHEDULER_add_delayed (h->reconnect_time,
                                                       &reconnect_cbk, h);
@@ -787,6 +983,7 @@ process_tunnel_created (struct GNUNET_MESH_Handle *h,
   MESH_TunnelNumber tid;
 
   tid = ntohl (msg->tunnel_id);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Creating incoming tunnel %X\n", tid);
   if (tid < GNUNET_MESH_LOCAL_TUNNEL_ID_SERV)
   {
     GNUNET_break (0);
@@ -807,10 +1004,17 @@ process_tunnel_created (struct GNUNET_MESH_Handle *h,
     GNUNET_PEER_change_rc (t->owner, 1);
     t->mesh = h;
     t->tid = tid;
+    if ((msg->opt & MESH_TUNNEL_OPT_NOBUFFER) != 0)
+      t->buffering = GNUNET_NO;
+    else
+      t->buffering = GNUNET_YES;
+    if ((msg->opt & MESH_TUNNEL_OPT_SPEED_MIN) != 0)
+      t->speed_min = GNUNET_YES;
     atsi.type = 0;
     atsi.value = 0;
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "  created tunnel %p\n", t);
     t->ctx = h->new_tunnel (h->cls, t, &msg->peer, &atsi);
-    LOG (GNUNET_ERROR_TYPE_DEBUG, "new incoming tunnel %X\n", t->tid);
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "User notified\n");
   }
   else
   {
@@ -936,6 +1140,7 @@ process_incoming_data (struct GNUNET_MESH_Handle *h,
   struct GNUNET_MESH_ToOrigin *to_orig;
   struct GNUNET_MESH_Tunnel *t;
   unsigned int i;
+  uint32_t pid;
   uint16_t type;
 
   LOG (GNUNET_ERROR_TYPE_DEBUG, "Got a data message!\n");
@@ -948,7 +1153,8 @@ process_incoming_data (struct GNUNET_MESH_Handle *h,
     t = retrieve_tunnel (h, ntohl (ucast->tid));
     payload = (struct GNUNET_MessageHeader *) &ucast[1];
     peer = &ucast->oid;
-    LOG (GNUNET_ERROR_TYPE_DEBUG, "  ucast on tunnel %s [%x]\n",
+    pid = ntohl (ucast->pid);
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "  ucast on tunnel %s [%X]\n",
          GNUNET_i2s (peer), ntohl (ucast->tid));
     break;
   case GNUNET_MESSAGE_TYPE_MESH_MULTICAST:
@@ -956,7 +1162,8 @@ process_incoming_data (struct GNUNET_MESH_Handle *h,
     t = retrieve_tunnel (h, ntohl (mcast->tid));
     payload = (struct GNUNET_MessageHeader *) &mcast[1];
     peer = &mcast->oid;
-    LOG (GNUNET_ERROR_TYPE_DEBUG, "  mcast on tunnel %s [%x]\n",
+    pid = ntohl (mcast->pid);
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "  mcast on tunnel %s [%X]\n",
          GNUNET_i2s (peer), ntohl (mcast->tid));
     break;
   case GNUNET_MESSAGE_TYPE_MESH_TO_ORIGIN:
@@ -964,19 +1171,34 @@ process_incoming_data (struct GNUNET_MESH_Handle *h,
     t = retrieve_tunnel (h, ntohl (to_orig->tid));
     payload = (struct GNUNET_MessageHeader *) &to_orig[1];
     peer = &to_orig->sender;
-    LOG (GNUNET_ERROR_TYPE_DEBUG, "  torig on tunnel %s [%x]\n",
+    pid = ntohl (to_orig->pid);
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "  torig on tunnel %s [%X]\n",
          GNUNET_i2s (peer), ntohl (to_orig->tid));
     break;
   default:
     GNUNET_break (0);
     return GNUNET_YES;
   }
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "  pid %u\n", pid);
   if (NULL == t)
   {
-    /* Tunnel was ignored, probably service didn't get it yet */
+    /* Tunnel was ignored/destroyed, probably service didn't get it yet */
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "  ignored!\n");
     return GNUNET_YES;
   }
+  if (GNUNET_YES ==
+      GMC_is_pid_bigger(pid, t->max_recv_pid))
+  {
+    GNUNET_break (0);
+    LOG (GNUNET_ERROR_TYPE_WARNING,
+         "  unauthorized message! (%u, max %u)\n",
+         pid, t->max_recv_pid);
+    // FIXME fc what now? accept? reject?
+    return GNUNET_YES;
+  }
+  t->last_recv_pid = pid;
   type = ntohs (payload->type);
+  send_ack (h, t);
   for (i = 0; i < h->n_handlers; i++)
   {
     handler = &h->message_handlers[i];
@@ -989,19 +1211,172 @@ process_incoming_data (struct GNUNET_MESH_Handle *h,
       if (GNUNET_OK !=
           handler->callback (h->cls, t, &t->ctx, peer, payload, &atsi))
       {
-        LOG (GNUNET_ERROR_TYPE_DEBUG, "MESH: callback caused disconnection\n");
+        LOG (GNUNET_ERROR_TYPE_DEBUG, "callback caused disconnection\n");
         GNUNET_MESH_disconnect (h);
         return GNUNET_NO;
       }
       else
       {
         LOG (GNUNET_ERROR_TYPE_DEBUG,
-             "MESH: callback completed successfully\n");
-
+             "callback completed successfully\n");
       }
     }
   }
   return GNUNET_YES;
+}
+
+
+/**
+ * Process a local ACK message, enabling the client to send
+ * more data to the service.
+ * 
+ * @param h Mesh handle.
+ * @param message Message itself.
+ */
+static void
+process_ack (struct GNUNET_MESH_Handle *h,
+             const struct GNUNET_MessageHeader *message)
+{
+  struct GNUNET_MESH_LocalAck *msg;
+  struct GNUNET_MESH_Tunnel *t;
+  uint32_t ack;
+
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Got an ACK!\n");
+  h->acks_recv++;
+  msg = (struct GNUNET_MESH_LocalAck *) message;
+
+  t = retrieve_tunnel (h, ntohl (msg->tunnel_id));
+
+  if (NULL == t)
+  {
+    LOG (GNUNET_ERROR_TYPE_WARNING,
+         "ACK on unknown tunnel %X\n",
+         ntohl (msg->tunnel_id));
+    return;
+  }
+  ack = ntohl (msg->max_pid);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "  on tunnel %X, ack %u!\n", t->tid, ack);
+  if (GNUNET_YES == GMC_is_pid_bigger(ack, t->max_send_pid))
+    t->max_send_pid = ack;
+  else
+    return;
+  if (NULL == h->th && 0 < t->packet_size)
+  {
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "  tmt rdy was NULL, requesting!\n", t->tid, ack);
+    h->th =
+        GNUNET_CLIENT_notify_transmit_ready (h->client, t->packet_size,
+                                             GNUNET_TIME_UNIT_FOREVER_REL,
+                                             GNUNET_YES, &send_callback, h);
+  }
+}
+
+
+/**
+ * Process a local reply about info on all tunnels, pass info to the user.
+ *
+ * @param h Mesh handle.
+ * @param message Message itself.
+ */
+static void
+process_get_tunnels (struct GNUNET_MESH_Handle *h,
+                     const struct GNUNET_MessageHeader *message)
+{
+  struct GNUNET_MESH_LocalMonitor *msg;
+  uint32_t npeers;
+
+  GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "Get Tunnels messasge received\n");
+
+  if (NULL == h->tunnels_cb)
+  {
+    GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "  ignored\n");
+    return;
+  }
+
+  msg = (struct GNUNET_MESH_LocalMonitor *) message;
+  npeers = ntohl (msg->npeers);
+  if (ntohs (message->size) !=
+      (sizeof (struct GNUNET_MESH_LocalMonitor) +
+       npeers * sizeof (struct GNUNET_PeerIdentity)))
+  {
+    GNUNET_break_op (0);
+    GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
+                "Get tunnels message: size %hu - expected %u (%u peers)\n",
+                ntohs (message->size),
+                sizeof (struct GNUNET_MESH_LocalMonitor) +
+                npeers * sizeof (struct GNUNET_PeerIdentity),
+                npeers);
+    return;
+  }
+  h->tunnels_cb (h->tunnels_cls,
+                 &msg->owner,
+                 ntohl (msg->tunnel_id),
+                 (struct GNUNET_PeerIdentity *) &msg[1],
+                 npeers);
+}
+
+
+
+/**
+ * Process a local monitor_tunnel reply, pass info to the user.
+ *
+ * @param h Mesh handle.
+ * @param message Message itself.
+ */
+static void
+process_show_tunnel (struct GNUNET_MESH_Handle *h,
+                     const struct GNUNET_MessageHeader *message)
+{
+  struct GNUNET_MESH_LocalMonitor *msg;
+  struct GNUNET_PeerIdentity *new_peers;
+  uint32_t *new_parents;
+  size_t esize;
+  uint32_t npeers;
+  unsigned int i;
+
+  GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "Show Tunnel messasge received\n");
+
+  if (NULL == h->tunnel_cb)
+  {
+    GNUNET_log (GNUNET_ERROR_TYPE_ERROR, "  ignored\n");
+    return;
+  }
+
+  /* Verify message sanity */
+  msg = (struct GNUNET_MESH_LocalMonitor *) message;
+  npeers = ntohl (msg->npeers);
+  esize = sizeof (struct GNUNET_MESH_LocalMonitor);
+  esize += npeers * (sizeof (struct GNUNET_PeerIdentity) + sizeof (uint32_t));
+  if (ntohs (message->size) != esize)
+  {
+    GNUNET_break_op (0);
+    GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
+                "Show tunnel message: size %hu - expected %u (%u peers)\n",
+                ntohs (message->size),
+                esize,
+                npeers);
+
+    h->tunnel_cb (h->tunnel_cls, NULL, NULL);
+    h->tunnel_cb = NULL;
+    h->tunnel_cls = NULL;
+    h->tunnel_npeers = 0;
+    GNUNET_free_non_null (h->peers);
+    h->peers = NULL;
+
+    return;
+  }
+
+  new_peers = (struct GNUNET_PeerIdentity *) &msg[1];
+  new_parents = (uint32_t *) &new_peers[npeers];
+
+  h->peers = GNUNET_realloc (h->peers, h->tunnel_npeers + npeers);
+  memcpy (&h->peers[h->tunnel_npeers],
+          new_peers,
+          npeers * sizeof (struct GNUNET_PeerIdentity));
+  h->tunnel_npeers += npeers;
+  for (i = 0; i < npeers; i++)
+    h->tunnel_cb (h->tunnel_cls,
+                  &new_peers[i],
+                  &h->peers[new_parents[i]]);
 }
 
 
@@ -1018,12 +1393,15 @@ msg_received (void *cls, const struct GNUNET_MessageHeader *msg)
 
   if (msg == NULL)
   {
-    LOG (GNUNET_ERROR_TYPE_DEBUG, "Received NULL msg\n");
+    LOG (GNUNET_ERROR_TYPE_DEBUG, 
+	 "Mesh service disconnected, reconnecting\n", h);
     reconnect (h);
     return;
   }
-  LOG (GNUNET_ERROR_TYPE_DEBUG, "received a message type %hu from MESH\n",
-       ntohs (msg->type));
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "\n",
+       GNUNET_MESH_DEBUG_M2S (ntohs (msg->type)));
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Received a message: %s\n",
+       GNUNET_MESH_DEBUG_M2S (ntohs (msg->type)));
   switch (ntohs (msg->type))
   {
     /* Notify of a new incoming tunnel */
@@ -1046,15 +1424,32 @@ msg_received (void *cls, const struct GNUNET_MessageHeader *msg)
     if (GNUNET_NO == process_incoming_data (h, msg))
       return;
     break;
-    /* We shouldn't get any other packages, log and ignore */
+  case GNUNET_MESSAGE_TYPE_MESH_LOCAL_ACK:
+    process_ack (h, msg);
+    break;
+  case GNUNET_MESSAGE_TYPE_MESH_LOCAL_INFO_TUNNELS:
+        process_get_tunnels (h, msg);
+    break;
+  case GNUNET_MESSAGE_TYPE_MESH_LOCAL_INFO_TUNNEL:
+        process_show_tunnel (h, msg);
+    break;
   default:
+    /* We shouldn't get any other packages, log and ignore */
     LOG (GNUNET_ERROR_TYPE_WARNING,
-         "MESH: unsolicited message form service (type %d)\n",
-         ntohs (msg->type));
+         "unsolicited message form service (type %s)\n",
+         GNUNET_MESH_DEBUG_M2S (ntohs (msg->type)));
   }
   LOG (GNUNET_ERROR_TYPE_DEBUG, "message processed\n");
-  GNUNET_CLIENT_receive (h->client, &msg_received, h,
-                         GNUNET_TIME_UNIT_FOREVER_REL);
+  if (GNUNET_YES == h->in_receive)
+  {
+    GNUNET_CLIENT_receive (h->client, &msg_received, h,
+                           GNUNET_TIME_UNIT_FOREVER_REL);
+  }
+  else
+  {
+    LOG (GNUNET_ERROR_TYPE_DEBUG,
+         "in receive off, not calling CLIENT_receive\n");
+  }
 }
 
 
@@ -1077,24 +1472,39 @@ send_callback (void *cls, size_t size, void *buf)
 {
   struct GNUNET_MESH_Handle *h = cls;
   struct GNUNET_MESH_TransmitHandle *th;
+  struct GNUNET_MESH_TransmitHandle *next;
+  struct GNUNET_MESH_Tunnel *t;
   char *cbuf = buf;
   size_t tsize;
   size_t psize;
+  size_t nsize;
 
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "\n");
   LOG (GNUNET_ERROR_TYPE_DEBUG, "Send packet() Buffer %u\n", size);
-  h->th = NULL;
   if ((0 == size) || (NULL == buf))
   {
-    LOG (GNUNET_ERROR_TYPE_DEBUG, "Received NULL callback\n");
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "Received NULL send callback on %p\n", h);
     reconnect (h);
+    h->th = NULL;
     return 0;
   }
   tsize = 0;
-  while ((NULL != (th = h->th_head)) && (size >= th->size))
+  next = h->th_head;
+  nsize = message_ready_size (h);
+  while ((NULL != (th = next)) && (0 < nsize) && (size >= nsize))
   {
-    if (NULL != th->notify)
+    t = th->tunnel;
+    if (GNUNET_YES == th_is_payload (th))
     {
-      if (th->tunnel->tid >= GNUNET_MESH_LOCAL_TUNNEL_ID_SERV)
+      LOG (GNUNET_ERROR_TYPE_DEBUG, " payload\n");
+      if (GNUNET_YES == GMC_is_pid_bigger(t->next_send_pid, t->max_send_pid))
+      {
+        /* This tunnel is not ready to transmit yet, try next message */
+        next = th->next;
+        continue;
+      }
+      t->packet_size = 0;
+      if (t->tid >= GNUNET_MESH_LOCAL_TUNNEL_ID_SERV)
       {
         /* traffic to origin */
         struct GNUNET_MESH_ToOrigin to;
@@ -1103,15 +1513,17 @@ send_callback (void *cls, size_t size, void *buf)
         GNUNET_assert (size >= th->size);
         mh = (struct GNUNET_MessageHeader *) &cbuf[sizeof (to)];
         psize = th->notify (th->notify_cls, size - sizeof (to), mh);
-        LOG (GNUNET_ERROR_TYPE_DEBUG, "  to origin, type %u\n",
-             ntohs (mh->type));
+        LOG (GNUNET_ERROR_TYPE_DEBUG, "  to origin, type %s\n",
+             GNUNET_MESH_DEBUG_M2S (ntohs (mh->type)));
         if (psize > 0)
         {
           psize += sizeof (to);
           GNUNET_assert (size >= psize);
           to.header.size = htons (psize);
           to.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_TO_ORIGIN);
-          to.tid = htonl (th->tunnel->tid);
+          to.tid = htonl (t->tid);
+          to.pid = htonl (t->next_send_pid);
+          to.ttl = 0;
           memset (&to.oid, 0, sizeof (struct GNUNET_PeerIdentity));
           memset (&to.sender, 0, sizeof (struct GNUNET_PeerIdentity));
           memcpy (cbuf, &to, sizeof (to));
@@ -1126,16 +1538,16 @@ send_callback (void *cls, size_t size, void *buf)
         GNUNET_assert (size >= th->size);
         mh = (struct GNUNET_MessageHeader *) &cbuf[sizeof (mc)];
         psize = th->notify (th->notify_cls, size - sizeof (mc), mh);
-        LOG (GNUNET_ERROR_TYPE_DEBUG, "  multicast, type %u\n",
-             ntohs (mh->type));
+        LOG (GNUNET_ERROR_TYPE_DEBUG, "  multicast, type %s\n",
+             GNUNET_MESH_DEBUG_M2S (ntohs (mh->type)));
         if (psize > 0)
         {
           psize += sizeof (mc);
           GNUNET_assert (size >= psize);
           mc.header.size = htons (psize);
           mc.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_MULTICAST);
-          mc.tid = htonl (th->tunnel->tid);
-          mc.mid = 0;
+          mc.tid = htonl (t->tid);
+          mc.pid = htonl (t->next_send_pid);
           mc.ttl = 0;
           memset (&mc.oid, 0, sizeof (struct GNUNET_PeerIdentity));
           memcpy (cbuf, &mc, sizeof (mc));
@@ -1150,56 +1562,69 @@ send_callback (void *cls, size_t size, void *buf)
         GNUNET_assert (size >= th->size);
         mh = (struct GNUNET_MessageHeader *) &cbuf[sizeof (uc)];
         psize = th->notify (th->notify_cls, size - sizeof (uc), mh);
-        LOG (GNUNET_ERROR_TYPE_DEBUG, "  unicast, type %u\n",
-             ntohs (mh->type));
+        LOG (GNUNET_ERROR_TYPE_DEBUG, "  unicast, type %s\n",
+             GNUNET_MESH_DEBUG_M2S (ntohs (mh->type)));
         if (psize > 0)
         {
           psize += sizeof (uc);
           GNUNET_assert (size >= psize);
           uc.header.size = htons (psize);
           uc.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_UNICAST);
-          uc.tid = htonl (th->tunnel->tid);
+          uc.tid = htonl (t->tid);
+          uc.pid = htonl (t->next_send_pid);
+          uc.ttl = 0;
           memset (&uc.oid, 0, sizeof (struct GNUNET_PeerIdentity));
           GNUNET_PEER_resolve (th->target, &uc.destination);
           memcpy (cbuf, &uc, sizeof (uc));
         }
       }
+      t->next_send_pid++;
     }
     else
     {
+      struct GNUNET_MessageHeader *mh = (struct GNUNET_MessageHeader *) &th[1];
+
+      LOG (GNUNET_ERROR_TYPE_DEBUG, "  mesh traffic, type %s\n",
+           GNUNET_MESH_DEBUG_M2S (ntohs (mh->type)));
       memcpy (cbuf, &th[1], th->size);
       psize = th->size;
     }
     if (th->timeout_task != GNUNET_SCHEDULER_NO_TASK)
       GNUNET_SCHEDULER_cancel (th->timeout_task);
-    if (NULL != th->notify)
-    {
-      th->tunnel->mesh->npackets--;
-      th->tunnel->npackets--;
-    }
     GNUNET_CONTAINER_DLL_remove (h->th_head, h->th_tail, th);
     GNUNET_free (th);
+    next = h->th_head;
+    nsize = message_ready_size (h);
     cbuf += psize;
     size -= psize;
     tsize += psize;
   }
   LOG (GNUNET_ERROR_TYPE_DEBUG, "  total size: %u\n", tsize);
-  if (NULL != (th = h->th_head))
+  h->th = NULL;
+  size = message_ready_size (h);
+  if (0 != size)
   {
-    LOG (GNUNET_ERROR_TYPE_DEBUG, "  next size: %u\n", th->size);
-    if (NULL == h->th)
-      h->th =
-          GNUNET_CLIENT_notify_transmit_ready (h->client, th->size,
-                                               GNUNET_TIME_UNIT_FOREVER_REL,
-                                               GNUNET_YES, &send_callback, h);
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "  next size: %u\n", size);
+    h->th =
+        GNUNET_CLIENT_notify_transmit_ready (h->client, size,
+                                             GNUNET_TIME_UNIT_FOREVER_REL,
+                                             GNUNET_YES, &send_callback, h);
   }
-  LOG (GNUNET_ERROR_TYPE_DEBUG, "Send packet() END\n");
+  else
+  {
+    if (NULL != h->th_head)
+      LOG (GNUNET_ERROR_TYPE_DEBUG, "  can't transmit any more\n");
+    else
+      LOG (GNUNET_ERROR_TYPE_DEBUG, "  nothing left to transmit\n");
+  }
   if (GNUNET_NO == h->in_receive)
   {
+    LOG (GNUNET_ERROR_TYPE_DEBUG, " start receiving from service\n");
     h->in_receive = GNUNET_YES;
     GNUNET_CLIENT_receive (h->client, &msg_received, h,
                            GNUNET_TIME_UNIT_FOREVER_REL);
   }
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Send packet() END\n");
   return tsize;
 }
 
@@ -1221,16 +1646,19 @@ send_packet (struct GNUNET_MESH_Handle *h,
   struct GNUNET_MESH_TransmitHandle *th;
   size_t msize;
 
+  LOG (GNUNET_ERROR_TYPE_DEBUG, " Sending message to service: %s\n",
+       GNUNET_MESH_DEBUG_M2S(ntohs(msg->type)));
   msize = ntohs (msg->size);
   th = GNUNET_malloc (sizeof (struct GNUNET_MESH_TransmitHandle) + msize);
-  th->priority = UINT32_MAX;
   th->timeout = GNUNET_TIME_UNIT_FOREVER_ABS;
   th->size = msize;
   th->tunnel = tunnel;
   memcpy (&th[1], msg, msize);
   add_to_queue (h, th);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "  queued\n");
   if (NULL != h->th)
     return;
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "  calling ntfy tmt rdy for %u bytes\n", msize);
   h->th =
       GNUNET_CLIENT_notify_transmit_ready (h->client, msize,
                                            GNUNET_TIME_UNIT_FOREVER_REL,
@@ -1246,9 +1674,6 @@ send_packet (struct GNUNET_MESH_Handle *h,
  * Connect to the mesh service.
  *
  * @param cfg configuration to use
- * @param queue_size size of the data message queue, shared among all tunnels
- *                   (each tunnel is guaranteed to accept at least one message,
- *                    no matter what is the status of other tunnels)
  * @param cls closure for the various callbacks that follow
  *            (including handlers in the handlers array)
  * @param new_tunnel function called when an *inbound* tunnel is created
@@ -1264,8 +1689,7 @@ send_packet (struct GNUNET_MESH_Handle *h,
  *         (in this case, init is never called)
  */
 struct GNUNET_MESH_Handle *
-GNUNET_MESH_connect (const struct GNUNET_CONFIGURATION_Handle *cfg,
-                     unsigned int queue_size, void *cls,
+GNUNET_MESH_connect (const struct GNUNET_CONFIGURATION_Handle *cfg, void *cls,
                      GNUNET_MESH_InboundTunnelNotificationHandler new_tunnel,
                      GNUNET_MESH_TunnelEndHandler cleaner,
                      const struct GNUNET_MESH_MessageHandler *handlers,
@@ -1275,8 +1699,8 @@ GNUNET_MESH_connect (const struct GNUNET_CONFIGURATION_Handle *cfg,
 
   LOG (GNUNET_ERROR_TYPE_DEBUG, "GNUNET_MESH_connect()\n");
   h = GNUNET_malloc (sizeof (struct GNUNET_MESH_Handle));
+  LOG (GNUNET_ERROR_TYPE_DEBUG, " addr %p\n", h);
   h->cfg = cfg;
-  h->max_queue_size = queue_size;
   h->new_tunnel = new_tunnel;
   h->cleaner = cleaner;
   h->client = GNUNET_CLIENT_connect ("mesh", cfg);
@@ -1295,8 +1719,12 @@ GNUNET_MESH_connect (const struct GNUNET_CONFIGURATION_Handle *cfg,
   h->reconnect_task = GNUNET_SCHEDULER_NO_TASK;
 
   /* count handlers and apps, calculate size */
-  for (h->n_applications = 0; stypes[h->n_applications]; h->n_applications++) ;
-  for (h->n_handlers = 0; handlers[h->n_handlers].type; h->n_handlers++) ;
+  for (h->n_applications = 0;
+       stypes && stypes[h->n_applications];
+       h->n_applications++) ;
+  for (h->n_handlers = 0;
+       handlers && handlers[h->n_handlers].type;
+       h->n_handlers++) ;
   send_connect (h);
   LOG (GNUNET_ERROR_TYPE_DEBUG, "GNUNET_MESH_connect() END\n");
   return h;
@@ -1318,6 +1746,13 @@ GNUNET_MESH_disconnect (struct GNUNET_MESH_Handle *handle)
   struct GNUNET_MESH_Tunnel *aux;
   struct GNUNET_MESH_TransmitHandle *th;
 
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "MESH DISCONNECT\n");
+
+#if DEBUG_ACK
+  LOG (GNUNET_ERROR_TYPE_INFO, "Sent %d ACKs\n", handle->acks_sent);
+  LOG (GNUNET_ERROR_TYPE_INFO, "Recv %d ACKs\n\n", handle->acks_recv);
+#endif
+
   t = handle->tunnels_head;
   while (NULL != t)
   {
@@ -1337,17 +1772,18 @@ GNUNET_MESH_disconnect (struct GNUNET_MESH_Handle *handle)
     /* Make sure it is an allowed packet (everything else should have been
      * already canceled).
      */
-    GNUNET_break (UINT32_MAX == th->priority);
-    GNUNET_break (NULL == th->notify);
+    GNUNET_break (GNUNET_NO == th_is_payload (th));
     msg = (struct GNUNET_MessageHeader *) &th[1];
     switch (ntohs(msg->type))
     {
       case GNUNET_MESSAGE_TYPE_MESH_LOCAL_CONNECT:
       case GNUNET_MESSAGE_TYPE_MESH_LOCAL_TUNNEL_DESTROY:
+      case GNUNET_MESSAGE_TYPE_MESH_LOCAL_INFO_TUNNELS:
+      case GNUNET_MESSAGE_TYPE_MESH_LOCAL_INFO_TUNNEL:
         break;
       default:
         GNUNET_break (0);
-        LOG (GNUNET_ERROR_TYPE_DEBUG, "unexpected msg %u\n",
+        LOG (GNUNET_ERROR_TYPE_ERROR, "unexpected msg %u\n",
              ntohs(msg->type));
     }
 
@@ -1375,6 +1811,55 @@ GNUNET_MESH_disconnect (struct GNUNET_MESH_Handle *handle)
 
 
 /**
+ * Announce to ther peer the availability of services described by the regex,
+ * in order to be reachable to other peers via connect_by_string.
+ * 
+ * Note that the first 8 characters are considered to be part of a prefix,
+ * (for instance 'gnunet://'). If you put a variable part in there (*, +. ()),
+ * all matching strings will be stored in the DHT.
+ *
+ * @param h Handle to mesh.
+ * @param regex String with the regular expression describing local services.
+ * @param compression_characters How many characters can be assigned to one
+ *                               edge of the graph. The bigger the variability
+ *                               of the data, the smaller this parameter should
+ *                               be (down to 1).
+ *                               For maximum compression, use strlen (regex)
+ *                               or 0 (special value). Use with care!
+ */
+void
+GNUNET_MESH_announce_regex (struct GNUNET_MESH_Handle *h,
+                            const char *regex,
+                            unsigned int compression_characters)
+{
+  struct GNUNET_MESH_RegexAnnounce *msg;
+  size_t payload;
+  size_t len;
+  size_t msgsize;
+  size_t offset;
+  char buffer[UINT16_MAX];
+
+  len = strlen (regex);
+  payload = UINT16_MAX - sizeof(struct GNUNET_MESH_RegexAnnounce);
+  msg = (struct GNUNET_MESH_RegexAnnounce *) buffer;
+  msg->header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_ANNOUNCE_REGEX);
+  msg->compression_characters = htons (compression_characters);
+  offset = 0;
+  do
+  {
+    msgsize = (len - offset > payload) ? payload : len - offset;
+    memcpy (&msg[1], &regex[offset], msgsize);
+    offset += msgsize;
+    msgsize += sizeof(struct GNUNET_MESH_RegexAnnounce);
+
+    msg->header.size = htons (msgsize);
+    msg->last = htons (offset >= len);
+
+    send_packet (h, &msg->header, NULL);
+  } while (len > offset);
+}
+
+/**
  * Create a new tunnel (we're initiator and will be allowed to add/remove peers
  * and to broadcast).
  *
@@ -1395,6 +1880,8 @@ GNUNET_MESH_tunnel_create (struct GNUNET_MESH_Handle *h, void *tunnel_ctx,
 
   LOG (GNUNET_ERROR_TYPE_DEBUG, "Creating new tunnel\n");
   t = create_tunnel (h, 0);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "  at %p\n", t);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "  number %X\n", t->tid);
   t->connect_handler = connect_handler;
   t->disconnect_handler = disconnect_handler;
   t->cls = handler_cls;
@@ -1434,7 +1921,7 @@ GNUNET_MESH_tunnel_destroy (struct GNUNET_MESH_Tunnel *tunnel)
     {
       aux = th->next;
       /* FIXME call the handler? */
-      if (NULL != th->notify)
+      if (GNUNET_YES == th_is_payload (th))
         th->notify (th->notify_cls, 0, NULL);
       GNUNET_CONTAINER_DLL_remove (h->th_head, h->th_tail, th);
       GNUNET_free (th);
@@ -1448,12 +1935,90 @@ GNUNET_MESH_tunnel_destroy (struct GNUNET_MESH_Tunnel *tunnel)
   send_packet (h, &msg.header, NULL);
 }
 
+/**
+ * Request that the tunnel data rate is limited to the speed of the slowest
+ * receiver.
+ *
+ * @param tunnel Tunnel affected.
+ */
+void
+GNUNET_MESH_tunnel_speed_min (struct GNUNET_MESH_Tunnel *tunnel)
+{
+  struct GNUNET_MESH_TunnelMessage msg;
+  struct GNUNET_MESH_Handle *h;
+
+  h = tunnel->mesh;
+  tunnel->speed_min = GNUNET_YES;
+
+  msg.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_TUNNEL_MIN);
+  msg.header.size = htons (sizeof (struct GNUNET_MESH_TunnelMessage));
+  msg.tunnel_id = htonl (tunnel->tid);
+
+  send_packet (h, &msg.header, NULL);
+}
+
+
+/**
+ * Request that the tunnel data rate is limited to the speed of the fastest
+ * receiver. This is the default behavior.
+ *
+ * @param tunnel Tunnel affected.
+ */
+void
+GNUNET_MESH_tunnel_speed_max (struct GNUNET_MESH_Tunnel *tunnel)
+{
+  struct GNUNET_MESH_TunnelMessage msg;
+  struct GNUNET_MESH_Handle *h;
+
+  h = tunnel->mesh;
+  tunnel->speed_min = GNUNET_NO;
+
+  msg.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_TUNNEL_MAX);
+  msg.header.size = htons (sizeof (struct GNUNET_MESH_TunnelMessage));
+  msg.tunnel_id = htonl (tunnel->tid);
+
+  send_packet (h, &msg.header, NULL);
+}
+
+/**
+ * Turn on/off the buffering status of the tunnel.
+ * 
+ * @param tunnel Tunnel affected.
+ * @param buffer GNUNET_YES to turn buffering on (default),
+ *               GNUNET_NO otherwise.
+ */
+void
+GNUNET_MESH_tunnel_buffer (struct GNUNET_MESH_Tunnel *tunnel, int buffer)
+{
+  struct GNUNET_MESH_TunnelMessage msg;
+  struct GNUNET_MESH_Handle *h;
+
+  h = tunnel->mesh;
+  tunnel->buffering = buffer;
+  tunnel->max_send_pid = tunnel->next_send_pid;
+
+  if (GNUNET_YES == buffer)
+    msg.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_TUNNEL_BUFFER);
+  else
+    msg.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_TUNNEL_NOBUFFER);
+  msg.header.size = htons (sizeof (struct GNUNET_MESH_TunnelMessage));
+  msg.tunnel_id = htonl (tunnel->tid);
+
+  send_packet (h, &msg.header, NULL);
+}
+
 
 /**
  * Request that a peer should be added to the tunnel.  The existing
  * connect handler will be called ONCE with either success or failure.
  * This function should NOT be called again with the same peer before the
  * connect handler is called.
+ * FIXME: I think the above documentation is false. I think it should
+ * read: "The connect handler will be called once the peer was actually
+ * successfully added to the multicast group. This function should
+ * not be called twice for the same peer (unless, of course,
+ * the peer was removed using GNUNET_MESH_peer_Request_connect_del in
+ * the meantime).
  *
  * @param tunnel handle to existing tunnel
  * @param peer peer to add
@@ -1485,8 +2050,6 @@ GNUNET_MESH_peer_request_connect_add (struct GNUNET_MESH_Tunnel *tunnel,
   msg.tunnel_id = htonl (tunnel->tid);
   msg.peer = *peer;
   send_packet (tunnel->mesh, &msg.header, tunnel);
-
-  return;
 }
 
 
@@ -1560,16 +2123,98 @@ GNUNET_MESH_peer_request_connect_by_type (struct GNUNET_MESH_Tunnel *tunnel,
 
 
 /**
+ * Request that the mesh should try to connect to a peer matching the
+ * description given in the service string.
+ * 
+ * FIXME: allow multiple? how to deal with reconnect?
+ *
+ * @param tunnel handle to existing tunnel
+ * @param description string describing the destination node requirements
+ */
+void
+GNUNET_MESH_peer_request_connect_by_string (struct GNUNET_MESH_Tunnel *tunnel,
+                                            const char *description)
+{
+  struct GNUNET_MESH_ConnectPeerByString *m;
+  size_t len;
+  size_t msgsize;
+
+  len = strlen (description);
+  msgsize = sizeof(struct GNUNET_MESH_ConnectPeerByString) + len;
+  GNUNET_assert (UINT16_MAX > msgsize);
+  {
+    char buffer[msgsize];
+
+    m = (struct GNUNET_MESH_ConnectPeerByString *) buffer;
+    m->header.size = htons (msgsize);
+    m->header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_PEER_ADD_BY_STRING);
+    m->tunnel_id = htonl (tunnel->tid);
+    memcpy(&m[1], description, len);
+
+    send_packet (tunnel->mesh, &m->header, tunnel);
+  }
+}
+
+
+/**
+ * Request that the given peer isn't added to this tunnel in calls to
+ * connect_by_* calls, (due to misbehaviour, bad performance, ...).
+ *
+ * @param tunnel handle to existing tunnel.
+ * @param peer peer identity of the peer which should be blacklisted
+ *                  for the tunnel.
+ */
+void
+GNUNET_MESH_peer_blacklist (struct GNUNET_MESH_Tunnel *tunnel,
+                            const struct GNUNET_PeerIdentity *peer)
+{
+  struct GNUNET_MESH_PeerControl msg;
+
+  msg.header.size = htons (sizeof (struct GNUNET_MESH_PeerControl));
+  msg.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_PEER_BLACKLIST);
+  msg.tunnel_id = htonl (tunnel->tid);
+  msg.peer = *peer;
+  send_packet (tunnel->mesh, &msg.header, tunnel);
+
+  return;
+}
+
+
+/**
+ * Request that the given peer isn't blacklisted anymore from this tunnel,
+ * and therefore can be added in future calls to connect_by_*.
+ * The peer must have been previously blacklisted for this tunnel.
+ *
+ * @param tunnel handle to existing tunnel.
+ * @param peer peer identity of the peer which shouldn't be blacklisted
+ *                  for the tunnel anymore.
+ */
+void
+GNUNET_MESH_peer_unblacklist (struct GNUNET_MESH_Tunnel *tunnel,
+                              const struct GNUNET_PeerIdentity *peer)
+{
+  struct GNUNET_MESH_PeerControl msg;
+
+  msg.header.size = htons (sizeof (struct GNUNET_MESH_PeerControl));
+  msg.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_PEER_UNBLACKLIST);
+  msg.tunnel_id = htonl (tunnel->tid);
+  msg.peer = *peer;
+  send_packet (tunnel->mesh, &msg.header, tunnel);
+
+  return;
+}
+
+
+/**
  * Ask the mesh to call "notify" once it is ready to transmit the
- * given number of bytes to the specified "target".  If we are not yet
- * connected to the specified peer, a call to this function will cause
- * us to try to establish a connection.
+ * given number of bytes to the specified tunnel or target.
+ * Only one call can be active at any time, to issue another request,
+ * wait for the callback or cancel the current request.
  *
  * @param tunnel tunnel to use for transmission
  * @param cork is corking allowed for this transmission?
- * @param priority how important is the message?
  * @param maxdelay how long can the message wait?
- * @param target destination for the message,
+ * @param target destination for the message
  *               NULL for multicast to all tunnel targets
  * @param notify_size how many bytes of buffer space does notify want?
  * @param notify function to call when buffer space is available;
@@ -1583,7 +2228,6 @@ GNUNET_MESH_peer_request_connect_by_type (struct GNUNET_MESH_Tunnel *tunnel,
  */
 struct GNUNET_MESH_TransmitHandle *
 GNUNET_MESH_notify_transmit_ready (struct GNUNET_MESH_Tunnel *tunnel, int cork,
-                                   uint32_t priority,
                                    struct GNUNET_TIME_Relative maxdelay,
                                    const struct GNUNET_PeerIdentity *target,
                                    size_t notify_size,
@@ -1591,53 +2235,22 @@ GNUNET_MESH_notify_transmit_ready (struct GNUNET_MESH_Tunnel *tunnel, int cork,
                                    void *notify_cls)
 {
   struct GNUNET_MESH_TransmitHandle *th;
-  struct GNUNET_MESH_TransmitHandle *least_priority_th;
-  uint32_t least_priority;
   size_t overhead;
 
   GNUNET_assert (NULL != tunnel);
-  LOG (GNUNET_ERROR_TYPE_DEBUG, "mesh notify transmit ready called\n");
-  if (NULL != target)
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "MESH NOTIFY TRANSMIT READY\n");
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "    on tunnel %X\n", tunnel->tid);
+  if (tunnel->tid >= GNUNET_MESH_LOCAL_TUNNEL_ID_SERV)
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "    to origin\n");
+  else if (NULL != target)
     LOG (GNUNET_ERROR_TYPE_DEBUG, "    target %s\n", GNUNET_i2s (target));
   else
     LOG (GNUNET_ERROR_TYPE_DEBUG, "    target multicast\n");
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "    payload size %u\n", notify_size);
   GNUNET_assert (NULL != notify);
-  if (tunnel->mesh->npackets >= tunnel->mesh->max_queue_size &&
-      tunnel->npackets > 0)
-  {
-    /* queue full */
-    if (0 == priority)
-      return NULL;
-    th = tunnel->mesh->th_tail;
-    least_priority = priority;
-    least_priority_th = NULL;
-    while (NULL != th)
-    {
-      if (th->priority < least_priority && th->tunnel->npackets > 1)
-      {
-        least_priority_th = th;
-        least_priority = th->priority;
-      }
-      th = th->prev;
-    }
-    if (NULL == least_priority_th)
-      return NULL;
-    /* Can't be a control message */
-    GNUNET_assert (NULL != least_priority_th->notify);
-    least_priority_th->notify (notify_cls, 0, NULL);
-    least_priority_th->tunnel->npackets--;
-    tunnel->mesh->npackets--;
-    GNUNET_CONTAINER_DLL_remove (tunnel->mesh->th_head, tunnel->mesh->th_tail,
-                                 least_priority_th);
-    if (GNUNET_SCHEDULER_NO_TASK != least_priority_th->timeout_task)
-      GNUNET_SCHEDULER_cancel (least_priority_th->timeout_task);
-    GNUNET_free (least_priority_th);
-  }
-  tunnel->npackets++;
-  tunnel->mesh->npackets++;
+  GNUNET_assert (0 == tunnel->packet_size); // Only one data packet allowed
   th = GNUNET_malloc (sizeof (struct GNUNET_MESH_TransmitHandle));
   th->tunnel = tunnel;
-  th->priority = priority;
   th->timeout = GNUNET_TIME_relative_to_absolute (maxdelay);
   th->target = GNUNET_PEER_intern (target);
   if (tunnel->tid >= GNUNET_MESH_LOCAL_TUNNEL_ID_SERV)
@@ -1646,17 +2259,22 @@ GNUNET_MESH_notify_transmit_ready (struct GNUNET_MESH_Tunnel *tunnel, int cork,
     overhead = sizeof (struct GNUNET_MESH_Multicast);
   else
     overhead = sizeof (struct GNUNET_MESH_Unicast);
-  th->size = notify_size + overhead;
+  tunnel->packet_size = th->size = notify_size + overhead;
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "    total size %u\n", th->size);
   th->notify = notify;
   th->notify_cls = notify_cls;
   add_to_queue (tunnel->mesh, th);
   if (NULL != tunnel->mesh->th)
     return th;
+  if (GMC_is_pid_bigger(tunnel->next_send_pid, tunnel->max_send_pid))
+    return th;
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "    call notify tmt rdy\n");
   tunnel->mesh->th =
       GNUNET_CLIENT_notify_transmit_ready (tunnel->mesh->client, th->size,
                                            GNUNET_TIME_UNIT_FOREVER_REL,
                                            GNUNET_YES, &send_callback,
                                            tunnel->mesh);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "MESH NOTIFY TRANSMIT READY END\n");
   return th;
 }
 
@@ -1671,17 +2289,103 @@ GNUNET_MESH_notify_transmit_ready_cancel (struct GNUNET_MESH_TransmitHandle *th)
 {
   struct GNUNET_MESH_Handle *mesh;
 
+  th->tunnel->packet_size = 0;
   mesh = th->tunnel->mesh;
   if (th->timeout_task != GNUNET_SCHEDULER_NO_TASK)
     GNUNET_SCHEDULER_cancel (th->timeout_task);
   GNUNET_CONTAINER_DLL_remove (mesh->th_head, mesh->th_tail, th);
   GNUNET_free (th);
-  if ((NULL == mesh->th_head) && (NULL != mesh->th))
+  if ((0 == message_ready_size (mesh)) && (NULL != mesh->th))
   {
     /* queue empty, no point in asking for transmission */
     GNUNET_CLIENT_notify_transmit_ready_cancel (mesh->th);
     mesh->th = NULL;
   }
+}
+
+
+/**
+ * Request information about the running mesh peer.
+ * The callback will be called for every tunnel known to the service,
+ * listing all active peers that blong to the tunnel.
+ *
+ * If called again on the same handle, it will overwrite the previous
+ * callback and cls. To retrieve the cls, monitor_cancel must be
+ * called first.
+ *
+ * WARNING: unstable API, likely to change in the future!
+ *
+ * @param h Handle to the mesh peer.
+ * @param callback Function to call with the requested data.
+ * @param callback_cls Closure for @c callback.
+ */
+void
+GNUNET_MESH_get_tunnels (struct GNUNET_MESH_Handle *h,
+                         GNUNET_MESH_TunnelsCB callback,
+                         void *callback_cls)
+{
+  struct GNUNET_MessageHeader msg;
+
+  msg.size = htons (sizeof (msg));
+  msg.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_INFO_TUNNELS);
+  send_packet (h, &msg, NULL);
+  h->tunnels_cb = callback;
+  h->tunnels_cls = callback_cls;
+
+  return;
+}
+
+
+/**
+ * Cancel a monitor request. The monitor callback will not be called.
+ *
+ * @param h Mesh handle.
+ *
+ * @return Closure given to GNUNET_MESH_monitor, if any.
+ */
+void *
+GNUNET_MESH_get_tunnels_cancel (struct GNUNET_MESH_Handle *h)
+{
+  void *cls;
+
+  cls = h->tunnels_cls;
+  h->tunnels_cb = NULL;
+  h->tunnels_cls = NULL;
+  return cls;
+}
+
+
+/**
+ * Request information about a specific tunnel of the running mesh peer.
+ *
+ * WARNING: unstable API, likely to change in the future!
+ *
+ * @param h Handle to the mesh peer.
+ * @param initiator ID of the owner of the tunnel.
+ * @param tunnel_number Tunnel number.
+ * @param callback Function to call with the requested data.
+ * @param callback_cls Closure for @c callback.
+ */
+void
+GNUNET_MESH_show_tunnel (struct GNUNET_MESH_Handle *h,
+                         struct GNUNET_PeerIdentity *initiator,
+                         unsigned int tunnel_number,
+                         GNUNET_MESH_TunnelCB callback,
+                         void *callback_cls)
+{
+  struct GNUNET_MESH_LocalMonitor msg;
+
+  msg.header.size = htons (sizeof (msg));
+  msg.header.type = htons (GNUNET_MESSAGE_TYPE_MESH_LOCAL_INFO_TUNNEL);
+  msg.npeers = htonl (0);
+  msg.owner = *initiator;
+  msg.tunnel_id = htonl (tunnel_number);
+  msg.reserved = 0;
+  send_packet (h, &msg.header, NULL);
+  h->tunnel_cb = callback;
+  h->tunnel_cls = callback_cls;
+
+  return;
 }
 
 

@@ -1,6 +1,6 @@
 /*
      This file is part of GNUnet.
-     (C) 2001, 2002, 2003, 2004, 2005, 2006, 2009 Christian Grothoff (and other contributing authors)
+     (C) 2001-2012 Christian Grothoff (and other contributing authors)
 
      GNUnet is free software; you can redistribute it and/or modify
      it under the terms of the GNU General Public License as published
@@ -17,10 +17,10 @@
      Free Software Foundation, Inc., 59 Temple Place - Suite 330,
      Boston, MA 02111-1307, USA.
 */
-
 /**
  * @file include/gnunet_disk_lib.h
  * @brief disk IO apis
+ * @author Christian Grothoff
  */
 #ifndef GNUNET_DISK_LIB_H
 #define GNUNET_DISK_LIB_H
@@ -36,10 +36,20 @@
  */
 struct GNUNET_DISK_PipeHandle;
 
-
+/**
+ * Type of a handle.
+ */
 enum GNUNET_FILE_Type
 {
-  GNUNET_DISK_FILE, GNUNET_PIPE
+  /**
+   * Handle represents a file.
+   */ 
+  GNUNET_DISK_HANLDE_TYPE_FILE, 
+
+  /**
+   * Handle represents a pipe.
+   */
+  GNUNET_DISK_HANLDE_TYPE_PIPE
 };
 
 /**
@@ -75,8 +85,7 @@ struct GNUNET_DISK_FileHandle
    */
   int fd;
 
-#endif                          /*
-                                 */
+#endif
 };
 
 
@@ -103,39 +112,39 @@ extern "C"
 enum GNUNET_DISK_OpenFlags
 {
 
-    /**
-     * Open the file for reading
-     */
+  /**
+   * Open the file for reading
+   */
   GNUNET_DISK_OPEN_READ = 1,
 
-    /**
-     * Open the file for writing
-     */
+  /**
+   * Open the file for writing
+   */
   GNUNET_DISK_OPEN_WRITE = 2,
 
-    /**
-     * Open the file for both reading and writing
-     */
+  /**
+   * Open the file for both reading and writing
+   */
   GNUNET_DISK_OPEN_READWRITE = 3,
 
-    /**
-     * Fail if file already exists
-     */
+  /**
+   * Fail if file already exists
+   */
   GNUNET_DISK_OPEN_FAILIFEXISTS = 4,
 
-    /**
-     * Truncate file if it exists
-     */
+  /**
+   * Truncate file if it exists
+   */
   GNUNET_DISK_OPEN_TRUNCATE = 8,
 
-    /**
-     * Create file if it doesn't exist
-     */
+  /**
+   * Create file if it doesn't exist
+   */
   GNUNET_DISK_OPEN_CREATE = 16,
 
-    /**
-     * Append to the file
-     */
+  /**
+   * Append to the file
+   */
   GNUNET_DISK_OPEN_APPEND = 32
 };
 
@@ -144,18 +153,19 @@ enum GNUNET_DISK_OpenFlags
  */
 enum GNUNET_DISK_MapType
 {
-    /**
-     * Read-only memory map.
-     */
+  /**
+   * Read-only memory map.
+   */
   GNUNET_DISK_MAP_TYPE_READ = 1,
-
-    /**
-     * Write-able memory map.
-     */
+  
+  /**
+   * Write-able memory map.
+   */
   GNUNET_DISK_MAP_TYPE_WRITE = 2,
-    /**
-     * Read-write memory map.
-     */
+
+  /**
+   * Read-write memory map.
+   */
   GNUNET_DISK_MAP_TYPE_READWRITE = 3
 };
 
@@ -165,77 +175,78 @@ enum GNUNET_DISK_MapType
  */
 enum GNUNET_DISK_AccessPermissions
 {
-    /**
-     * Nobody is allowed to do anything to the file.
-     */
+  /**
+   * Nobody is allowed to do anything to the file.
+   */
   GNUNET_DISK_PERM_NONE = 0,
 
-    /**
-     * Owner can read.
-     */
+  /**
+   * Owner can read.
+   */
   GNUNET_DISK_PERM_USER_READ = 1,
 
-    /**
-     * Owner can write.
-     */
+  /**
+   * Owner can write.
+   */
   GNUNET_DISK_PERM_USER_WRITE = 2,
 
-    /**
-     * Owner can execute.
-     */
+  /**
+   * Owner can execute.
+   */
   GNUNET_DISK_PERM_USER_EXEC = 4,
 
-    /**
-     * Group can read.
-     */
+  /**
+   * Group can read.
+   */
   GNUNET_DISK_PERM_GROUP_READ = 8,
 
-    /**
-     * Group can write.
-     */
+  /**
+   * Group can write.
+   */
   GNUNET_DISK_PERM_GROUP_WRITE = 16,
 
-    /**
-     * Group can execute.
-     */
+  /**
+   * Group can execute.
+   */
   GNUNET_DISK_PERM_GROUP_EXEC = 32,
 
-    /**
-     * Everybody can read.
-     */
+  /**
+   * Everybody can read.
+   */
   GNUNET_DISK_PERM_OTHER_READ = 64,
 
-    /**
-     * Everybody can write.
-     */
+  /**
+   * Everybody can write.
+   */
   GNUNET_DISK_PERM_OTHER_WRITE = 128,
 
-    /**
-     * Everybody can execute.
-     */
+  /**
+   * Everybody can execute.
+   */
   GNUNET_DISK_PERM_OTHER_EXEC = 256
 };
 
 
 /**
- * Constants for specifying how to seek.
+ * Constants for specifying how to seek.  Do not change values or order,
+ * some of the code depends on the specific numeric values!
  */
 enum GNUNET_DISK_Seek
 {
-    /**
-     * Seek an absolute position (from the start of the file).
-     */
-  GNUNET_DISK_SEEK_SET,
+  /**
+   * Seek an absolute position (from the start of the file).
+   */
+  GNUNET_DISK_SEEK_SET = 0,
 
-    /**
-     * Seek a relative position (from the current offset).
-     */
-  GNUNET_DISK_SEEK_CUR,
+  /**
+   * Seek a relative position (from the current offset).
+   */
+  GNUNET_DISK_SEEK_CUR = 1,
 
-    /**
-     * Seek an absolute position from the end of the file.
-     */
-  GNUNET_DISK_SEEK_END
+  /**
+   * Seek an absolute position from the end of the file.
+   */
+  GNUNET_DISK_SEEK_END = 2
 };
 
 
@@ -244,14 +255,14 @@ enum GNUNET_DISK_Seek
  */
 enum GNUNET_DISK_PipeEnd
 {
-    /**
-     * The reading-end of a pipe.
-     */
+  /**
+   * The reading-end of a pipe.
+   */
   GNUNET_DISK_PIPE_END_READ = 0,
 
-    /**
-     * The writing-end of a pipe.
-     */
+  /**
+   * The writing-end of a pipe.
+   */
   GNUNET_DISK_PIPE_END_WRITE = 1
 };
 
@@ -287,6 +298,17 @@ GNUNET_DISK_handle_invalid (const struct GNUNET_DISK_FileHandle *h);
  */
 int
 GNUNET_DISK_file_test (const char *fil);
+
+
+/**
+ * Move a file out of the way (create a backup) by
+ * renaming it to "orig.NUM~" where NUM is the smallest
+ * number that is not used yet.
+ *
+ * @param fil name of the file to back up
+ */
+void
+GNUNET_DISK_file_backup (const char *fil);
 
 
 /**
@@ -356,6 +378,19 @@ GNUNET_DISK_mktemp (const char *t);
 
 
 /**
+ * Create an (empty) temporary directory on disk.  If the given name is not an
+ * absolute path, the current 'TMPDIR' will be prepended.  In any case, 6
+ * random characters will be appended to the name to create a unique name.
+ *
+ * @param t component to use for the name;
+ *        does NOT contain "XXXXXX" or "/tmp/".
+ * @return NULL on error, otherwise name of freshly created directory
+ */
+char *
+GNUNET_DISK_mkdtemp (const char *t);
+
+
+/**
  * Open a file.  Note that the access permissions will only be
  * used if a new file is created and if the underlying operating
  * system supports the given permissions.
@@ -410,6 +445,7 @@ GNUNET_DISK_pipe (int blocking_read, int blocking_write, int inherit_read, int i
 struct GNUNET_DISK_PipeHandle *
 GNUNET_DISK_pipe_from_fd (int blocking_read, int blocking_write, int fd[2]);
 
+
 /**
  * Closes an interprocess channel
  * @param p pipe
@@ -417,6 +453,7 @@ GNUNET_DISK_pipe_from_fd (int blocking_read, int blocking_write, int fd[2]);
  */
 int
 GNUNET_DISK_pipe_close (struct GNUNET_DISK_PipeHandle *p);
+
 
 /**
  * Closes one half of an interprocess channel
@@ -450,6 +487,17 @@ const struct GNUNET_DISK_FileHandle *
 GNUNET_DISK_pipe_handle (const struct GNUNET_DISK_PipeHandle *p,
                          enum GNUNET_DISK_PipeEnd n);
 
+
+/**
+ * Get a handle from a native FD.
+ *
+ * @param fd native file descriptor
+ * @return file handle corresponding to the descriptor
+ */
+struct GNUNET_DISK_FileHandle *
+GNUNET_DISK_get_handle_from_native (FILE *fd);
+
+
 /**
  * Read the contents of a binary file into a buffer.
  * @param h handle to an open file
@@ -460,6 +508,7 @@ GNUNET_DISK_pipe_handle (const struct GNUNET_DISK_PipeHandle *p,
 ssize_t
 GNUNET_DISK_file_read (const struct GNUNET_DISK_FileHandle *h, void *result,
                        size_t len);
+
 
 /**
  * Read the contents of a binary file into a buffer.
@@ -473,7 +522,8 @@ GNUNET_DISK_file_read (const struct GNUNET_DISK_FileHandle *h, void *result,
  */
 ssize_t
 GNUNET_DISK_file_read_non_blocking (const struct GNUNET_DISK_FileHandle * h,
-    void *result, size_t len);
+				    void *result, size_t len);
+
 
 /**
  * Read the contents of a binary file into a buffer.
@@ -624,28 +674,30 @@ GNUNET_DISK_directory_create_for_file (const char *filename);
 
 
 /**
- * Test if "fil" is a directory that can be accessed.
- * Will not print an error message if the directory
- * does not exist.  Will log errors if GNUNET_SYSERR is
- * returned.
+ * Test if "fil" is a directory and listable. Optionally, also check if the
+ * directory is readable.  Will not print an error message if the directory does
+ * not exist.  Will log errors if GNUNET_SYSERR is returned (i.e., a file exists
+ * with the same name).
  *
  * @param fil filename to test
- * @return GNUNET_YES if yes, GNUNET_NO if does not exist, GNUNET_SYSERR
- *   on any error and if exists but not directory
+ * @param is_readable GNUNET_YES to additionally check if "fil" is readable;
+ *          GNUNET_NO to disable this check
+ * @return GNUNET_YES if yes, GNUNET_NO if not; GNUNET_SYSERR if it
+ *           does not exist or stat'ed
  */
 int
-GNUNET_DISK_directory_test (const char *fil);
+GNUNET_DISK_directory_test (const char *fil, int is_readable);
 
 
 /**
  * Remove all files in a directory (rm -rf). Call with
  * caution.
  *
- * @param fileName the file to remove
+ * @param filename the file to remove
  * @return GNUNET_OK on success, GNUNET_SYSERR on error
  */
 int
-GNUNET_DISK_directory_remove (const char *fileName);
+GNUNET_DISK_directory_remove (const char *filename);
 
 
 /**

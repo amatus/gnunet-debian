@@ -11,10 +11,12 @@ endif
 
 pkgcfgdir= $(pkgdatadir)/config.d/
 
+libexecdir= $(pkglibdir)/libexec/
+
 pkgcfg_DATA = \
   lockmanager.conf
 
-bin_PROGRAMS = \
+libexec_PROGRAMS = \
   gnunet-service-lockmanager
 
 lib_LTLIBRARIES = \
@@ -32,37 +34,49 @@ libgnunetlockmanager_la_SOURCES = \
   lockmanager_api.c lockmanager.h
 libgnunetlockmanager_la_LIBADD = \
   $(top_builddir)/src/util/libgnunetutil.la \
-  $(XLIB)
+  $(XLIB) \
+  $(LTLIBINTL)
 libgnunetlockmanager_la_LDFLAGS = \
   $(GN_LIB_LDFLAGS) $(WINFLAGS) \
   -version-info 0:0:0
 
 check_PROGRAMS = \
-  test-lockmanager-api \
-  test-lockmanager-api-lockrelease \
-  test-lockmanager-api-servercrash
+  test_lockmanager_api \
+  test_lockmanager_api_lockrelease \
+  test_lockmanager_api_servercrash \
+  test_lockmanager_api_acquireretry
 
 EXTRA_DIST = \
   test_lockmanager_api.conf
 
 if ENABLE_TEST_RUN
-TESTS = $(check_PROGRAMS)
+ TESTS = $(check_PROGRAMS)
 endif
 
 test_lockmanager_api_SOURCES = \
   test_lockmanager_api.c
 test_lockmanager_api_LDADD = \
   $(top_builddir)/src/util/libgnunetutil.la \
+  $(top_builddir)/src/testing/libgnunettesting.la \
   libgnunetlockmanager.la
 
 test_lockmanager_api_lockrelease_SOURCES = \
   test_lockmanager_api_lockrelease.c
 test_lockmanager_api_lockrelease_LDADD = \
   $(top_builddir)/src/util/libgnunetutil.la \
+  $(top_builddir)/src/testing/libgnunettesting.la \
   libgnunetlockmanager.la
 
 test_lockmanager_api_servercrash_SOURCES = \
   test_lockmanager_api_servercrash.c
 test_lockmanager_api_servercrash_LDADD = \
   $(top_builddir)/src/util/libgnunetutil.la \
+  $(top_builddir)/src/testing/libgnunettesting.la \
+  libgnunetlockmanager.la
+
+test_lockmanager_api_acquireretry_SOURCES = \
+  test_lockmanager_api_acquireretry.c
+test_lockmanager_api_acquireretry_LDADD = \
+  $(top_builddir)/src/util/libgnunetutil.la \
+  $(top_builddir)/src/testing/libgnunettesting.la \
   libgnunetlockmanager.la

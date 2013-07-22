@@ -103,7 +103,7 @@ struct GNUNET_DATACACHE_Handle
  * @param size number of bytes that were made available
  */
 static void
-env_delete_notify (void *cls, const GNUNET_HashCode * key, size_t size)
+env_delete_notify (void *cls, const struct GNUNET_HashCode * key, size_t size)
 {
   struct GNUNET_DATACACHE_Handle *h = cls;
 
@@ -112,7 +112,9 @@ env_delete_notify (void *cls, const GNUNET_HashCode * key, size_t size)
   GNUNET_assert (h->utilization >= size);
   h->utilization -= size;
   GNUNET_CONTAINER_bloomfilter_remove (h->filter, key);
-  GNUNET_STATISTICS_update (h->stats, gettext_noop ("# bytes stored"), -size,
+  GNUNET_STATISTICS_update (h->stats, gettext_noop ("# bytes stored"), - (long long) size,
+                            GNUNET_NO);
+  GNUNET_STATISTICS_update (h->stats, gettext_noop ("# items stored"), -1,
                             GNUNET_NO);
 }
 
@@ -152,22 +154,24 @@ GNUNET_DATACACHE_create (const struct GNUNET_CONFIGURATION_Handle *cfg,
   bf_size = quota / 32;         /* 8 bit per entry, 1 bit per 32 kb in DB */
 
   ret = GNUNET_malloc (sizeof (struct GNUNET_DATACACHE_Handle));
-  ret->bloom_name = GNUNET_DISK_mktemp ("gnunet-datacachebloom");
-  if (NULL != ret->bloom_name)
+  
+  if (GNUNET_YES !=
+      GNUNET_CONFIGURATION_get_value_yesno (cfg, section, "DISABLE_BF"))
   {
-    ret->filter = GNUNET_CONTAINER_bloomfilter_load (ret->bloom_name, quota / 1024,     /* 8 bit per entry in DB, expect 1k entries */
-                                                     5);
-  }
-  if (NULL == ret->filter)
-  {
-    ret->filter = GNUNET_CONTAINER_bloomfilter_init (NULL, bf_size, 5); /* approx. 3% false positives at max use */
-  }
-  if (NULL == ret->filter)
-  {
-    GNUNET_free (name);
-    GNUNET_free (ret->bloom_name);
-    GNUNET_free (ret);
-    return NULL;
+    if (GNUNET_YES !=
+	GNUNET_CONFIGURATION_get_value_yesno (cfg, section, "DISABLE_BF_RC"))
+    {
+      ret->bloom_name = GNUNET_DISK_mktemp ("gnunet-datacachebloom");
+    }
+    if (NULL != ret->bloom_name)
+    {
+      ret->filter = GNUNET_CONTAINER_bloomfilter_load (ret->bloom_name, quota / 1024,     /* 8 bit per entry in DB, expect 1k entries */
+						       5); 
+    }    
+    if (NULL == ret->filter)
+    {
+	ret->filter = GNUNET_CONTAINER_bloomfilter_init (NULL, bf_size, 5); /* approx. 3% false positives at max use */
+    }  
   }
   ret->stats = GNUNET_STATISTICS_create ("datacache", cfg);
   ret->section = GNUNET_strdup (section);
@@ -201,7 +205,7 @@ GNUNET_DATACACHE_create (const struct GNUNET_CONFIGURATION_Handle *cfg,
 void
 GNUNET_DATACACHE_destroy (struct GNUNET_DATACACHE_Handle *h)
 {
-  if (h->filter != NULL)
+  if (NULL != h->filter)
     GNUNET_CONTAINER_bloomfilter_free (h->filter);
   if (h->api != NULL)
     GNUNET_break (NULL == GNUNET_PLUGIN_unload (h->lib_name, h->api));
@@ -229,27 +233,42 @@ GNUNET_DATACACHE_destroy (struct GNUNET_DATACACHE_Handle *h)
  * @param data data to store
  * @param type type of the value
  * @param discard_time when to discard the value in any case
- * @return GNUNET_OK on success, GNUNET_SYSERR on error (full, etc.)
+ * @param path_info_len number of entries in 'path_info'
+ * @param path_info a path through the network
+ * @return GNUNET_OK on success, GNUNET_SYSERR on error, GNUNET_NO if duplicate
  */
 int
 GNUNET_DATACACHE_put (struct GNUNET_DATACACHE_Handle *h,
-                      const GNUNET_HashCode * key, size_t size,
+                      const struct GNUNET_HashCode * key, size_t size,
                       const char *data, enum GNUNET_BLOCK_Type type,
-                      struct GNUNET_TIME_Absolute discard_time)
+                      struct GNUNET_TIME_Absolute discard_time,
+		      unsigned int path_info_len,
+		      const struct GNUNET_PeerIdentity *path_info)
 {
-  uint32_t used;
+  ssize_t used;
 
-  used = h->api->put (h->api->cls, key, size, data, type, discard_time);
-  if (used == 0)
+  used = h->api->put (h->api->cls, key, 
+		      size, data, 
+		      type, discard_time,
+		      path_info_len, path_info);
+  if (-1 == used)
   {
     GNUNET_break (0);
     return GNUNET_SYSERR;
+  }
+  if (0 == used)
+  {
+    /* duplicate */
+    return GNUNET_NO;
   }
   LOG (GNUNET_ERROR_TYPE_DEBUG, "Stored data under key `%s' in cache\n",
        GNUNET_h2s (key));
   GNUNET_STATISTICS_update (h->stats, gettext_noop ("# bytes stored"), size,
                             GNUNET_NO);
-  GNUNET_CONTAINER_bloomfilter_add (h->filter, key);
+  GNUNET_STATISTICS_update (h->stats, gettext_noop ("# items stored"), 1,
+                            GNUNET_NO);
+  if (NULL != h->filter)
+    GNUNET_CONTAINER_bloomfilter_add (h->filter, key);
   while (h->utilization + used > h->env.quota)
     GNUNET_assert (GNUNET_OK == h->api->del (h->api->cls));
   h->utilization += used;
@@ -270,14 +289,15 @@ GNUNET_DATACACHE_put (struct GNUNET_DATACACHE_Handle *h,
  */
 unsigned int
 GNUNET_DATACACHE_get (struct GNUNET_DATACACHE_Handle *h,
-                      const GNUNET_HashCode * key, enum GNUNET_BLOCK_Type type,
+                      const struct GNUNET_HashCode * key, enum GNUNET_BLOCK_Type type,
                       GNUNET_DATACACHE_Iterator iter, void *iter_cls)
 {
   GNUNET_STATISTICS_update (h->stats, gettext_noop ("# requests received"), 1,
                             GNUNET_NO);
   LOG (GNUNET_ERROR_TYPE_DEBUG, "Processing request for key `%s'\n",
        GNUNET_h2s (key));
-  if (GNUNET_OK != GNUNET_CONTAINER_bloomfilter_test (h->filter, key))
+  if ( (NULL != h->filter) &&
+       (GNUNET_OK != GNUNET_CONTAINER_bloomfilter_test (h->filter, key)) )
   {
     GNUNET_STATISTICS_update (h->stats,
                               gettext_noop

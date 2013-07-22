@@ -1,7 +1,8 @@
 INCLUDES = -I$(top_srcdir)/src/include
 
 if MINGW
-  WINFLAGS = -Wl,--no-undefined -Wl,--export-all-symbols
+  WINFLAGS = -Wl,--no-undefined, --export-all-symbols
+  EXITBIN = gnunet-helper-exit
 endif
 
 if USE_COVERAGE
@@ -9,6 +10,8 @@ if USE_COVERAGE
 endif
 
 pkgcfgdir= $(pkgdatadir)/config.d/
+
+libexecdir= $(pkglibdir)/libexec/
 
 plugindir = $(libdir)/gnunet
 
@@ -18,26 +21,38 @@ dist_pkgcfg_DATA = \
 if LINUX
 EXITBIN = gnunet-helper-exit
 install-exec-hook:
-	$(SUDO_BINARY) chown root:root $(bindir)/gnunet-helper-exit || true
-	$(SUDO_BINARY) chmod u+s $(bindir)/gnunet-helper-exit || true
+	$(top_srcdir)/src/exit/install-exit-helper.sh $(libexecdir) $(SUDO_BINARY) || true
 else
 install-exec-hook:
 endif
 
 
-bin_PROGRAMS = \
-  gnunet-daemon-exit $(EXITBIN) 
+libexec_PROGRAMS = \
+  gnunet-daemon-exit \
+  $(EXITBIN) 
 
+if MINGW
+  gnunet_helper_exit_LDFLAGS = \
+    -no-undefined -Wl,--export-all-symbols 
+   
+  gnunet_helper_exit_LDADD = \
+    -lsetupapi -lnewdev -lshell32 -liconv -lstdc++ \
+    -lcomdlg32 -lgdi32 -liphlpapi
 
-gnunet_helper_exit_SOURCES = \
- gnunet-helper-exit.c
-
+  gnunet_helper_exit_SOURCES = \
+    gnunet-helper-exit-windows.c
+else
+  gnunet_helper_exit_SOURCES = \
+   gnunet-helper-exit.c
+endif
 gnunet_daemon_exit_SOURCES = \
  gnunet-daemon-exit.c exit.h 
 gnunet_daemon_exit_LDADD = \
+  $(top_builddir)/src/dns/libgnunetdnsstub.la \
   $(top_builddir)/src/core/libgnunetcore.la \
   $(top_builddir)/src/statistics/libgnunetstatistics.la \
   $(top_builddir)/src/tun/libgnunettun.la \
   $(top_builddir)/src/util/libgnunetutil.la \
   $(top_builddir)/src/mesh/libgnunetmesh.la \
+  $(top_builddir)/src/regex/libgnunetregex.la \
   $(GN_LIBINTL)

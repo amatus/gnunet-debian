@@ -22,15 +22,10 @@
  * @brief testcase for resolver_api.c
  */
 #include "platform.h"
-#include "gnunet_common.h"
-#include "gnunet_getopt_lib.h"
-#include "gnunet_os_lib.h"
-#include "gnunet_program_lib.h"
-#include "gnunet_scheduler_lib.h"
+#include "gnunet_util_lib.h"
 #include "gnunet_resolver_service.h"
 #include "resolver.h"
 
-#define VERBOSE GNUNET_NO
 
 /**
  * Using DNS root servers to check gnunet's resolver service
@@ -40,12 +35,13 @@
 #define ROOTSERVER_NAME "a.root-servers.net"
 #define ROOTSERVER_IP 	"198.41.0.4"
 
+
 static void
 check_hostname (void *cls, const struct sockaddr *sa, socklen_t salen)
 {
   int *ok = cls;
 
-  if (salen == 0)
+  if (0 == salen)
   {
     (*ok) &= ~8;
     return;
@@ -82,7 +78,7 @@ check_localhost (void *cls, const char *hostname)
 {
   int *ok = cls;
 
-  if (hostname == NULL)
+  if (NULL == hostname)
     return;
   if (0 == strcmp (hostname, "localhost"))
   {
@@ -98,13 +94,14 @@ check_localhost (void *cls, const char *hostname)
   }
 }
 
+
 static void
 check_127 (void *cls, const struct sockaddr *sa, socklen_t salen)
 {
   int *ok = cls;
   const struct sockaddr_in *sai = (const struct sockaddr_in *) sa;
 
-  if (sa == NULL)
+  if (NULL == sa)
     return;
   GNUNET_assert (sizeof (struct sockaddr_in) == salen);
   if (sai->sin_addr.s_addr == htonl (INADDR_LOOPBACK))
@@ -121,6 +118,7 @@ check_127 (void *cls, const struct sockaddr *sa, socklen_t salen)
     GNUNET_break (0);
   }
 }
+
 
 static void
 check_local_fqdn (void *cls, const char *gnunet_fqdn)
@@ -159,14 +157,13 @@ check_local_fqdn (void *cls, const char *gnunet_fqdn)
 }
 
 
-
 static void
 check_rootserver_ip (void *cls, const struct sockaddr *sa, socklen_t salen)
 {
   int *ok = cls;
   const struct sockaddr_in *sai = (const struct sockaddr_in *) sa;
 
-  if (sa == NULL)
+  if (NULL == sa)
     return;
   GNUNET_assert (sizeof (struct sockaddr_in) == salen);
 
@@ -184,12 +181,13 @@ check_rootserver_ip (void *cls, const struct sockaddr *sa, socklen_t salen)
   }
 }
 
+
 static void
 check_rootserver_name (void *cls, const char *hostname)
 {
   int *ok = cls;
 
-  if (hostname == NULL)
+  if (NULL == hostname)
     return;
 
   if (0 == strcmp (hostname, ROOTSERVER_NAME))
@@ -205,6 +203,7 @@ check_rootserver_name (void *cls, const char *hostname)
     GNUNET_break (0);
   }
 }
+
 
 static void
 run (void *cls, char *const *args, const char *cfgfile,
@@ -347,36 +346,33 @@ run (void *cls, char *const *args, const char *cfgfile,
 
 }
 
-static int
-check ()
+
+int
+main (int argc, char *argv[])
 {
   int ok = 1 + 2 + 4 + 8;
   char *fn;
-  char *pfx;
   struct GNUNET_OS_Process *proc;
-
-  char *const argv[] =
-      { "test-resolver-api", "-c", "test_resolver_api_data.conf",
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
-    NULL
+  char *const argvx[] = { 
+    "test-resolver-api", "-c", "test_resolver_api_data.conf", NULL
   };
   struct GNUNET_GETOPT_CommandLineOption options[] =
       { GNUNET_GETOPT_OPTION_END };
-  pfx = GNUNET_OS_installation_get_path (GNUNET_OS_IPK_BINDIR);
-  GNUNET_asprintf (&fn, "%s%cgnunet-service-resolver", pfx, DIR_SEPARATOR);
-  GNUNET_free (pfx);
-  proc = GNUNET_OS_start_process (GNUNET_YES, NULL, NULL, fn, "gnunet-service-resolver",
-#if VERBOSE
-                                  "-L", "DEBUG",
-#endif
+
+  GNUNET_log_setup ("test-resolver-api",
+                    "WARNING",
+                    NULL);
+  fn = GNUNET_OS_get_libexec_binary_path ("gnunet-service-resolver");
+  proc = GNUNET_OS_start_process (GNUNET_YES, 
+				  GNUNET_OS_INHERIT_STD_OUT_AND_ERR, 
+				  NULL, NULL, fn, 
+				  "gnunet-service-resolver",
                                   "-c", "test_resolver_api_data.conf", NULL);
   GNUNET_assert (NULL != proc);
   GNUNET_free (fn);
   GNUNET_assert (GNUNET_OK ==
-                 GNUNET_PROGRAM_run ((sizeof (argv) / sizeof (char *)) - 1,
-                                     argv, "test-resolver-api", "nohelp",
+                 GNUNET_PROGRAM_run ((sizeof (argvx) / sizeof (char *)) - 1,
+                                     argvx, "test-resolver-api", "nohelp",
                                      options, &run, &ok));
   if (0 != GNUNET_OS_process_kill (proc, SIGTERM))
   {
@@ -386,26 +382,10 @@ check ()
   GNUNET_OS_process_wait (proc);
   GNUNET_OS_process_destroy (proc);
   proc = NULL;
-  if (ok != 0)
+  if (0 != ok)
     FPRINTF (stderr, "Missed some resolutions: %u\n", ok);
   return ok;
 }
 
-int
-main (int argc, char *argv[])
-{
-  int ret;
-
-  GNUNET_log_setup ("test-resolver-api",
-#if VERBOSE
-                    "DEBUG",
-#else
-                    "WARNING",
-#endif
-                    NULL);
-  ret = check ();
-
-  return ret;
-}
 
 /* end of test_resolver_api.c */

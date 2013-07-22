@@ -29,14 +29,14 @@
             sprintf(__gauger_s,"%Lf", (long double) (value));\
             __gauger_v[0] = "gauger";\
             __gauger_v[1] = "-n";\
-            __gauger_v[2] = counter;\
+            __gauger_v[2] = (char*) (counter);	\
             __gauger_v[3] = "-d";\
             __gauger_v[4] = __gauger_s;\
             __gauger_v[5] = "-u";\
-            __gauger_v[6] = unit;\
+            __gauger_v[6] = (char*) (unit);	\
             __gauger_v[7] = "-c";\
-            __gauger_v[8] = category;\
-            __gauger_v[9] = (char *)NULL;\
+            __gauger_v[8] = (char*) (category);	\
+            __gauger_v[9] = (char*) NULL;\
             execvp("gauger",__gauger_v);\
             _exit(1);\
         }else{\
@@ -59,30 +59,51 @@
             sprintf(__gauger_s,"%Lf", (long double) (value));\
             __gauger_v[0] = "gauger";\
             __gauger_v[1] = "-n";\
-            __gauger_v[2] = counter;\
+            __gauger_v[2] = (char*) (counter);	\
             __gauger_v[3] = "-d";\
             __gauger_v[4] = __gauger_s;\
             __gauger_v[5] = "-u";\
-            __gauger_v[6] = unit;\
+            __gauger_v[6] = (char*) (unit);	\
             __gauger_v[7] = "-i";\
             __gauger_v[8] = id;\
             __gauger_v[9] = "-c";\
-            __gauger_v[10] = category;\
-            __gauger_v[11] = (char *)NULL;\
+            __gauger_v[10] = (char *) (category);	\
+            __gauger_v[11] = (char *) NULL;\
             execvp("gauger",__gauger_v);\
             _exit(1);\
         }else{\
             _exit(0);\
         }\
     }else{\
-        waitpid(__gauger_p,NULL,0);\
+        waitpid(__gauger_p, NULL, 0);\
     }\
 }
 
-#else
+#else /* WINDOWS */
 
-#define GAUGER_ID(category, counter, value, unit, id) {}
-#define GAUGER(category, counter, value, unit) {}
+#include <stdlib.h>
+#include <stdio.h>
+#include <windef.h>
+
+#define GAUGER(category, counter, value, unit)\
+{\
+    char __gauger_commandline[MAX_PATH];\
+    \
+    snprintf (__gauger_commandline, MAX_PATH, "gauger.py -n \"%s\" -d \"%Lf\" -u \"%s\" -c \"%s\"",\
+	      (counter), (long double) (value), (unit), (category));	\
+    __gauger_commandline[MAX_PATH - 1] = '\0';\
+    system (__gauger_commandline);\
+}
+
+#define GAUGER_ID(category, counter, value, unit, id)\
+{\
+    char __gauger_commandline[MAX_PATH];\
+    \
+    snprintf (__gauger_commandline, MAX_PATH, "gauger.py -n \"%s\" -d \"%Lf\" -u \"%s\" -i \"%s\" -c \"%s\"",\
+	      (counter), (long double) (value), (unit), (id), (category)); \
+    __gauger_commandline[MAX_PATH - 1] = '\0';\
+    system (__gauger_commandline);\
+}
 
 #endif // WINDOWS
 

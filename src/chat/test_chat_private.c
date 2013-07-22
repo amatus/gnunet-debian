@@ -32,8 +32,6 @@
 
 #define VERBOSE GNUNET_NO
 
-#define START_ARM GNUNET_YES
-
 /**
  * How long until we give up on passing the test?
  */
@@ -47,16 +45,14 @@
 struct PeerContext
 {
   struct GNUNET_CONFIGURATION_Handle *cfg;
-#if START_ARM
   struct GNUNET_OS_Process *arm_proc;
-#endif
 };
 
 struct Wanted
 {
   struct GNUNET_CONTAINER_MetaData *meta;
 
-  GNUNET_HashCode *sender;
+  struct GNUNET_HashCode *sender;
 
   /**
    * Alternative meta/sender is used when we expect join/leave notification
@@ -64,7 +60,7 @@ struct Wanted
    */
   struct GNUNET_CONTAINER_MetaData *meta2;
 
-  GNUNET_HashCode *sender2;
+  struct GNUNET_HashCode *sender2;
 
   char *msg;
 
@@ -86,11 +82,11 @@ static struct PeerContext p2;
 
 static struct PeerContext p3;
 
-static GNUNET_HashCode alice;
+static struct GNUNET_HashCode alice;
 
-static GNUNET_HashCode bob;
+static struct GNUNET_HashCode bob;
 
-static GNUNET_HashCode carol;
+static struct GNUNET_HashCode carol;
 
 static struct GNUNET_CHAT_Room *alice_room;
 
@@ -124,30 +120,28 @@ static int bob_ready;
 
 static int is_p2p;
 
-struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded *bob_public_key = NULL;
+static struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded *bob_public_key;
 
 
 static void
 setup_peer (struct PeerContext *p, const char *cfgname)
 {
+  char *binary;
+
+  binary = GNUNET_OS_get_libexec_binary_path ("gnunet-service-arm");
   p->cfg = GNUNET_CONFIGURATION_create ();
-#if START_ARM
   p->arm_proc =
-      GNUNET_OS_start_process (GNUNET_YES, NULL, NULL, "gnunet-service-arm",
+    GNUNET_OS_start_process (GNUNET_YES, GNUNET_OS_INHERIT_STD_OUT_AND_ERR, NULL, NULL, binary,
                                "gnunet-service-arm",
-#if VERBOSE
-                               "-L", "DEBUG",
-#endif
                                "-c", cfgname, NULL);
-#endif
   GNUNET_assert (GNUNET_OK == GNUNET_CONFIGURATION_load (p->cfg, cfgname));
+  GNUNET_free (binary);
 }
 
 
 static void
 stop_arm (struct PeerContext *p)
 {
-#if START_ARM
   if (0 != GNUNET_OS_process_kill (p->arm_proc, SIGTERM))
     GNUNET_log_strerror (GNUNET_ERROR_TYPE_WARNING, "kill");
   if (GNUNET_OS_process_wait (p->arm_proc) != GNUNET_OK)
@@ -156,7 +150,6 @@ stop_arm (struct PeerContext *p)
               GNUNET_OS_process_get_pid (p->arm_proc));
   GNUNET_OS_process_destroy (p->arm_proc);
   p->arm_proc = NULL;
-#endif
   GNUNET_CONFIGURATION_destroy (p->cfg);
 }
 
@@ -220,7 +213,7 @@ member_list_cb (void *cls, const struct GNUNET_CONTAINER_MetaData *member_info,
                 enum GNUNET_CHAT_MsgOptions options)
 {
   struct Wanted *want = cls;
-  GNUNET_HashCode sender;
+  struct GNUNET_HashCode sender;
 
 #if VERBOSE
   printf ("%s - told that %s has %s\n", want->me,
@@ -233,9 +226,9 @@ member_list_cb (void *cls, const struct GNUNET_CONTAINER_MetaData *member_info,
                       sizeof (struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded),
                       &sender);
   /* entertain both primary and an alternative sender/meta */
-  if (((0 == memcmp (&sender, want->sender, sizeof (GNUNET_HashCode))) ||
+  if (((0 == memcmp (&sender, want->sender, sizeof (struct GNUNET_HashCode))) ||
        ((want->sender2 != NULL) &&
-        (0 == memcmp (&sender, want->sender2, sizeof (GNUNET_HashCode))))) &&
+        (0 == memcmp (&sender, want->sender2, sizeof (struct GNUNET_HashCode))))) &&
       (((member_info == NULL) && (want->meta == NULL)) ||
        ((member_info != NULL) &&
         (((want->meta != NULL) &&
@@ -246,7 +239,7 @@ member_list_cb (void *cls, const struct GNUNET_CONTAINER_MetaData *member_info,
   {
     /* remember Bob's public key, we need it to send private message */
     if (NULL == bob_public_key &&
-        (0 == memcmp (&bob, want->sender, sizeof (GNUNET_HashCode))))
+        (0 == memcmp (&bob, want->sender, sizeof (struct GNUNET_HashCode))))
       bob_public_key =
           GNUNET_memdup (member_id,
                          sizeof (struct
@@ -254,7 +247,7 @@ member_list_cb (void *cls, const struct GNUNET_CONTAINER_MetaData *member_info,
     if (want->sender2 != NULL)
     {
       /* flush alternative sender */
-      if (0 == memcmp (&sender, want->sender, sizeof (GNUNET_HashCode)))
+      if (0 == memcmp (&sender, want->sender, sizeof (struct GNUNET_HashCode)))
       {
         want->sender = want->sender2;
         want->meta = want->meta2;
@@ -277,7 +270,7 @@ member_list_cb (void *cls, const struct GNUNET_CONTAINER_MetaData *member_info,
 
 static int
 receive_cb (void *cls, struct GNUNET_CHAT_Room *room,
-            const GNUNET_HashCode * sender,
+            const struct GNUNET_HashCode * sender,
             const struct GNUNET_CONTAINER_MetaData *meta, const char *message,
             struct GNUNET_TIME_Absolute timestamp,
             enum GNUNET_CHAT_MsgOptions options)
@@ -294,7 +287,7 @@ receive_cb (void *cls, struct GNUNET_CHAT_Room *room,
   if ((want->msg != NULL) && (0 == strcmp (message, want->msg)) &&
       (((sender == NULL) && (want->sender == NULL)) ||
        ((sender != NULL) && (want->sender != NULL) &&
-        (0 == memcmp (sender, want->sender, sizeof (GNUNET_HashCode))))) &&
+        (0 == memcmp (sender, want->sender, sizeof (struct GNUNET_HashCode))))) &&
       (GNUNET_CONTAINER_meta_data_test_equal (meta, want->meta)) &&
       (options == want->opt) &&
       /* Not == since the library sets the actual timestamp, so it may be
@@ -614,9 +607,6 @@ main (int argc, char *argv[])
     "test-chat",
     "-c",
     "test_chat_data.conf",
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
     NULL
   };
   struct GNUNET_GETOPT_CommandLineOption options[] = {
@@ -624,11 +614,7 @@ main (int argc, char *argv[])
   };
 
   GNUNET_log_setup ("test_chat",
-#if VERBOSE
-                    "DEBUG",
-#else
                     "WARNING",
-#endif
                     NULL);
   if (strstr (argv[0], "p2p") != NULL)
   {

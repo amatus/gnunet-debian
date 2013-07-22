@@ -71,7 +71,7 @@ template_plugin_estimate_size (void *cls)
  * @return GNUNET_OK on success
  */
 static int
-template_plugin_put (void *cls, const GNUNET_HashCode * key, uint32_t size,
+template_plugin_put (void *cls, const struct GNUNET_HashCode * key, uint32_t size,
                      const void *data, enum GNUNET_BLOCK_Type type,
                      uint32_t priority, uint32_t anonymity,
                      uint32_t replication,
@@ -103,8 +103,8 @@ template_plugin_put (void *cls, const GNUNET_HashCode * key, uint32_t size,
  */
 static void
 template_plugin_get_key (void *cls, uint64_t offset,
-                         const GNUNET_HashCode * key,
-                         const GNUNET_HashCode * vhash,
+                         const struct GNUNET_HashCode * key,
+                         const struct GNUNET_HashCode * vhash,
                          enum GNUNET_BLOCK_Type type, PluginDatumProcessor proc,
                          void *proc_cls)
 {
@@ -213,6 +213,21 @@ template_plugin_drop (void *cls)
 
 
 /**
+ * Get all of the keys in the datastore.
+ *
+ * @param cls closure
+ * @param proc function to call on each key
+ * @param proc_cls closure for proc
+ */
+static void
+template_get_keys (void *cls,
+		   PluginKeyProcessor proc,
+		   void *proc_cls)
+{
+}
+
+
+/**
  * Entry point for the plugin.
  *
  * @param cls the "struct GNUNET_DATASTORE_PluginEnvironment*"
@@ -237,6 +252,7 @@ libgnunet_plugin_datastore_template_init (void *cls)
   api->get_expiration = &template_plugin_get_expiration;
   api->get_zero_anonymity = &template_plugin_get_zero_anonymity;
   api->drop = &template_plugin_drop;
+  api->get_keys = &template_get_keys;
   GNUNET_log_from (GNUNET_ERROR_TYPE_INFO, "template",
                    _("Template database running\n"));
   return api;

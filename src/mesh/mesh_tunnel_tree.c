@@ -379,6 +379,8 @@ tree_node_destroy (struct MeshTunnelTreeNode *parent)
   struct MeshTunnelTreeNode *n;
   struct MeshTunnelTreeNode *next;
 
+  if (NULL == parent)
+    return;
 #if MESH_TREE_DEBUG
   struct GNUNET_PeerIdentity id;
 
@@ -416,7 +418,7 @@ tree_new (GNUNET_PEER_Id peer)
   struct MeshTunnelTree *tree;
 
   tree = GNUNET_malloc (sizeof (struct MeshTunnelTree));
-  tree->first_hops = GNUNET_CONTAINER_multihashmap_create (32);
+  tree->first_hops = GNUNET_CONTAINER_multihashmap_create (32, GNUNET_NO);
   tree->root = tree_node_new (NULL, peer);
   tree->root->status = MESH_PEER_ROOT;
 
@@ -494,6 +496,8 @@ tree_get_predecessor (struct MeshTunnelTree *tree)
  *
  * @return peerinfo of the peer who is the first hop in the tunnel
  *         NULL on error
+ * 
+ * FIXME use PEER_Id
  */
 struct GNUNET_PeerIdentity *
 tree_get_first_hop (struct MeshTunnelTree *t, GNUNET_PEER_Id peer)
@@ -583,23 +587,114 @@ tree_mark_peers_disconnected (struct MeshTunnelTree *tree,
  *
  * @param tree Tree to use. Must have "me" set.
  * @param cb Callback to call over each child.
- * @param cls Closure.
+ * @param cb_cls Closure for @c cb.
  */
 void
 tree_iterate_children (struct MeshTunnelTree *tree, MeshTreeCallback cb,
-                       void *cls)
+                       void *cb_cls)
 {
   struct MeshTunnelTreeNode *n;
 
   if (NULL == tree->me)
-  {
-    GNUNET_break (0);
     return;
-  }
   for (n = tree->me->children_head; NULL != n; n = n->next)
   {
-    cb (cls, n->peer);
+    cb (cb_cls, n->peer);
   }
+}
+
+
+/**
+ * Struct to contain a list of pending nodes when iterating a tree.
+ */
+struct MeshTreePendingNode {
+
+  /**
+   * DLL next.
+   */
+  struct MeshTreePendingNode *next;
+
+  /**
+   * DLL prev.
+   */
+  struct MeshTreePendingNode *prev;
+
+  /**
+   * Pending node.
+   */
+  struct MeshTunnelTreeNode *node;
+};
+
+
+/**
+ * Iterate over all nodes in the tree.
+ *
+ * @param tree Tree to use..
+ * @param cb Callback to call over each child.
+ * @param cb_cls Closure for @c cb.
+ *
+ * TODO: recursive implementation? (s/heap/stack/g)
+ */
+void
+tree_iterate_all (struct MeshTunnelTree *tree,
+                  MeshWholeTreeCallback cb,
+                  void *cb_cls)
+{
+  struct MeshTunnelTreeNode *parent;
+  struct MeshTunnelTreeNode *n;
+  struct MeshTreePendingNode *head;
+  struct MeshTreePendingNode *tail;
+  struct MeshTreePendingNode *pending;
+
+  cb (cb_cls, tree->root->peer, 0);
+  pending = GNUNET_malloc (sizeof (struct MeshTreePendingNode));
+  pending->node = tree->root;
+  head = tail = NULL;
+  GNUNET_CONTAINER_DLL_insert (head, tail, pending);
+
+  while (NULL != head)
+  {
+    pending = head;
+    parent = pending->node;
+    GNUNET_CONTAINER_DLL_remove (head, tail, pending);
+    GNUNET_free (pending);
+    for (n = parent->children_head; NULL != n; n = n->next)
+    {
+      cb (cb_cls, n->peer, parent->peer);
+      pending = GNUNET_malloc (sizeof (struct MeshTreePendingNode));
+      pending->node = n;
+      /* Insert_tail: breadth first, Insert: depth first */
+      GNUNET_CONTAINER_DLL_insert (head, tail, pending);
+    }
+  }
+}
+
+
+/**
+ * Iterator to count the children in a tree.
+ */
+static void
+count_children_cb (void *cls, GNUNET_PEER_Id peer)
+{
+  unsigned int *i = cls;
+
+  (*i)++;
+}
+
+
+/**
+ * Count how many children does the local node have in the tree.
+ *
+ * @param tree Tree to use. Must have "me" set.
+ */
+unsigned int
+tree_count_children (struct MeshTunnelTree *tree)
+{
+  unsigned int i;
+
+  i = 0;
+  tree_iterate_children(tree, &count_children_cb, &i);
+  return i;
 }
 
 
@@ -647,7 +742,7 @@ tree_del_path (struct MeshTunnelTree *t, GNUNET_PEER_Id peer_id,
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "tree:   Deleting path to %s.\n",
               GNUNET_i2s (&id));
 #endif
-  if (peer_id == t->root->peer)
+  if (NULL == t->root || peer_id == t->root->peer)
     return NULL;
 
   for (n = t->disconnected_head; NULL != n; n = n->next)
@@ -669,7 +764,8 @@ tree_del_path (struct MeshTunnelTree *t, GNUNET_PEER_Id peer_id,
   GNUNET_CONTAINER_DLL_remove (parent->children_head, parent->children_tail, n);
   n->parent = NULL;
 
-  while (MESH_PEER_RELAY == parent->status && NULL == parent->children_head)
+  while (MESH_PEER_RELAY == parent->status &&
+         NULL == parent->children_head)
   {
 #if MESH_TREE_DEBUG
     GNUNET_PEER_resolve (parent->peer, &id);
@@ -677,6 +773,8 @@ tree_del_path (struct MeshTunnelTree *t, GNUNET_PEER_Id peer_id,
                 GNUNET_i2s (&id));
 #endif
     n = parent->parent;
+    if (parent == t->me)
+      t->me = NULL;
     tree_node_destroy (parent);
     parent = n;
   }
@@ -970,7 +1068,6 @@ tree_del_peer (struct MeshTunnelTree *t, GNUNET_PEER_Id peer,
     GNUNET_break (0);
     return GNUNET_YES;
   }
-  GNUNET_break_op (NULL == n->children_head);
   tree_node_destroy (n);
   if (NULL == t->root->children_head && t->me != t->root)
   {
@@ -1037,6 +1134,8 @@ void
 tree_debug (struct MeshTunnelTree *t)
 {
   tree_node_debug (t->root, 0);
+  FPRINTF (stderr, "root: %p\n", t->root);
+  FPRINTF (stderr, "me:   %p\n", t->me);
 }
 
 
@@ -1050,7 +1149,7 @@ tree_debug (struct MeshTunnelTree *t)
  * @return GNUNET_YES if we should continue to iterate, GNUNET_NO if not.
  */
 static int
-iterate_free (void *cls, const GNUNET_HashCode * key, void *value)
+iterate_free (void *cls, const struct GNUNET_HashCode * key, void *value)
 {
   GNUNET_free (value);
   return GNUNET_YES;

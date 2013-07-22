@@ -3,22 +3,23 @@ SUBDIRS = .
 gnunetincludedir = $(includedir)/gnunet
 
 nodist_gnunetinclude_HEADERS = \
-  gnunet_directories.h \
-  block_fs.h
+  gnunet_directories.h 
 
 if MINGW
   WINPROC = winproc.h
 endif
 
-gnunetinclude_HEADERS = \
+EXTRA_DIST = \
   gauger.h \
-  gettext.h \
-  platform.h \
-  plibc.h \
-  $(WINPROC) \
+  block_fs.h \
   block_dns.h \
   block_gns.h \
-  block_fs.h \
+  block_mesh.h \
+  block_regex.h
+
+gnunetinclude_HEADERS = \
+  platform.h plibc.h $(WINPROC) gettext.h \
+  gns_protocol.h \
   gnunet_applications.h \
   gnunet_arm_service.h \
   gnunet_ats_service.h \
@@ -42,6 +43,7 @@ gnunetinclude_HEADERS = \
   gnunet_dht_service.h \
   gnunet_disk_lib.h \
   gnunet_dnsparser_lib.h \
+  gnunet_dnsstub_lib.h \
   gnunet_dns_service.h \
   gnunet_dv_service.h \
   gnunet_fragmentation_lib.h \
@@ -79,7 +81,6 @@ gnunetinclude_HEADERS = \
   gnunet_strings_lib.h \
   gnunet_testbed_service.h \
   gnunet_testing_lib.h \
-  gnunet_testing_lib-new.h \
   gnunet_time_lib.h \
   gnunet_transport_service.h \
   gnunet_transport_plugin.h \

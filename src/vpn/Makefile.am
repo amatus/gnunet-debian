@@ -1,7 +1,8 @@
-INCLUDES = -I$(top_srcdir)/src/include
+INCLUDES = -I$(top_srcdir)/src/include -I$(top_builddir)/src/include
 
 if MINGW
-  WINFLAGS = -Wl,--no-undefined -Wl,--export-all-symbols
+  WINFLAGS = -Wl,--no-undefined,--export-all-symbols
+  VPNBIN = gnunet-helper-vpn
 endif
 
 if USE_COVERAGE
@@ -9,6 +10,8 @@ if USE_COVERAGE
 endif
 
 pkgcfgdir= $(pkgdatadir)/config.d/
+
+libexecdir= $(pkglibdir)/libexec/
 
 plugindir = $(libdir)/gnunet
 
@@ -18,15 +21,7 @@ pkgcfg_DATA = \
 if LINUX
 VPNBIN = gnunet-helper-vpn
 install-exec-hook:
-	$(SUDO_BINARY) chown root:root $(bindir)/gnunet-helper-vpn || true
-	$(SUDO_BINARY) chmod u+s $(bindir)/gnunet-helper-vpn || true
-if HAVE_MHD
- VPN_TEST = \
- test_gnunet_vpn-4_to_6 \
- test_gnunet_vpn-6_to_4 \
- test_gnunet_vpn-6_over \
- test_gnunet_vpn-4_over
-endif
+	$(top_srcdir)/src/vpn/install-vpn-helper.sh $(libexecdir) $(SUDO_BINARY) || true
 else
 install-exec-hook:
 endif
@@ -36,23 +31,27 @@ lib_LTLIBRARIES = \
   libgnunetvpn.la
 
 
+libexec_PROGRAMS = \
+  $(VPNBIN) \
+  gnunet-service-vpn
+
 bin_PROGRAMS = \
-  $(VPNBIN) gnunet-service-vpn gnunet-vpn
+  gnunet-vpn
 
+if MINGW
+  gnunet_helper_vpn_LDFLAGS = \
+    -no-undefined -Wl,--export-all-symbols 
+   
+  gnunet_helper_vpn_LDADD = \
+    -lsetupapi -lnewdev -lshell32 -liconv -lstdc++ \
+    -lcomdlg32 -lgdi32 -liphlpapi
 
-
-check_PROGRAMS = $(VPN_TEST)
-
-if ENABLE_TEST_RUN
-TESTS = $(check_PROGRAMS)
+  gnunet_helper_vpn_SOURCES = \
+    gnunet-helper-vpn-windows.c
+else
+    gnunet_helper_vpn_SOURCES = \
+	gnunet-helper-vpn.c
 endif
-
-EXTRA_DIST = \
-  test_gnunet_vpn.conf
-
-gnunet_helper_vpn_SOURCES = \
- gnunet-helper-vpn.c
-
 gnunet_service_vpn_SOURCES = \
  gnunet-service-vpn.c 
 gnunet_service_vpn_LDADD = \
@@ -60,6 +59,7 @@ gnunet_service_vpn_LDADD = \
   $(top_builddir)/src/tun/libgnunettun.la \
   $(top_builddir)/src/util/libgnunetutil.la \
   $(top_builddir)/src/mesh/libgnunetmesh.la \
+  $(top_builddir)/src/regex/libgnunetregex.la \
   $(GN_LIBINTL)
 gnunet_service_vpn_CFLAGS = \
   -I$(top_srcdir)/src/exit $(CFLAGS)
@@ -81,30 +81,3 @@ libgnunetvpn_la_LDFLAGS = \
   $(GN_LIB_LDFLAGS)
 
 
-test_gnunet_vpn_4_over_SOURCES = \
- test_gnunet_vpn.c
-test_gnunet_vpn_4_over_LDADD = -lmicrohttpd @LIBCURL@ \
- $(top_builddir)/src/vpn/libgnunetvpn.la \
- $(top_builddir)/src/arm/libgnunetarm.la \
- $(top_builddir)/src/util/libgnunetutil.la 
-
-test_gnunet_vpn_6_over_SOURCES = \
- test_gnunet_vpn.c
-test_gnunet_vpn_6_over_LDADD = -lmicrohttpd @LIBCURL@ \
- $(top_builddir)/src/vpn/libgnunetvpn.la \
- $(top_builddir)/src/arm/libgnunetarm.la \
- $(top_builddir)/src/util/libgnunetutil.la 
-
-test_gnunet_vpn_4_to_6_SOURCES = \
- test_gnunet_vpn.c
-test_gnunet_vpn_4_to_6_LDADD = -lmicrohttpd @LIBCURL@ \
- $(top_builddir)/src/vpn/libgnunetvpn.la \
- $(top_builddir)/src/arm/libgnunetarm.la \
- $(top_builddir)/src/util/libgnunetutil.la 
-
-test_gnunet_vpn_6_to_4_SOURCES = \
- test_gnunet_vpn.c
-test_gnunet_vpn_6_to_4_LDADD = -lmicrohttpd @LIBCURL@ \
- $(top_builddir)/src/vpn/libgnunetvpn.la \
- $(top_builddir)/src/arm/libgnunetarm.la \
- $(top_builddir)/src/util/libgnunetutil.la 

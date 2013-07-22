@@ -113,6 +113,37 @@ GNUNET_CONFIGURATION_parse (struct GNUNET_CONFIGURATION_Handle *cfg,
 
 
 /**
+ * Serializes the given configuration.
+ *
+ * @param cfg configuration to serialize
+ * @param size will be set to the size of the serialized memory block
+ * @return the memory block where the serialized configuration is
+ *           present. This memory should be freed by the caller
+ */
+char *
+GNUNET_CONFIGURATION_serialize (const struct GNUNET_CONFIGURATION_Handle *cfg,
+				size_t *size);
+
+
+/**
+ * De-serializes configuration
+ *
+ * @param cfg configuration to update
+ * @param mem the memory block of serialized configuration
+ * @param size the size of the memory block
+ * @param allow_inline set to GNUNET_YES if we recursively load configuration
+ *          from inlined configurations; GNUNET_NO if not and raise warnings
+ *          when we come across them
+ * @return GNUNET_OK on success, GNUNET_ERROR on error
+ */
+int
+GNUNET_CONFIGURATION_deserialize (struct GNUNET_CONFIGURATION_Handle *cfg,
+				  const char *mem,
+				  const size_t size,
+				  int allow_inline);
+
+
+/**
  * Write configuration file.
  *
  * @param cfg configuration to write
@@ -122,6 +153,7 @@ GNUNET_CONFIGURATION_parse (struct GNUNET_CONFIGURATION_Handle *cfg,
 int
 GNUNET_CONFIGURATION_write (struct GNUNET_CONFIGURATION_Handle *cfg,
                             const char *filename);
+
 
 /**
  * Write only configuration entries that have been changed to configuration file
@@ -135,6 +167,21 @@ GNUNET_CONFIGURATION_write_diffs (const struct GNUNET_CONFIGURATION_Handle
                                   *cfgDefault,
                                   const struct GNUNET_CONFIGURATION_Handle
                                   *cfgNew, const char *filename);
+
+
+/**
+ * Compute configuration with only entries that have been changed
+ *
+ * @param cfgDefault original configuration
+ * @param cfgNew new configuration
+ * @return configuration with only the differences, never NULL
+ */
+struct GNUNET_CONFIGURATION_Handle *
+GNUNET_CONFIGURATION_get_diff (const struct GNUNET_CONFIGURATION_Handle
+			       *cfgDefault,
+			       const struct GNUNET_CONFIGURATION_Handle
+			       *cfgNew);
+
 
 /**
  * Test if there are configuration options that were

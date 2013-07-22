@@ -236,6 +236,16 @@ struct GNUNET_STATISTICS_Handle
   struct GNUNET_TIME_Relative backoff;
 
   /**
+   * Maximum heap size observed so far (if available).
+   */
+  uint64_t peak_heap_size;
+
+  /**
+   * Maximum resident set side observed so far (if available).
+   */
+  uint64_t peak_rss;
+
+  /**
    * Size of the 'watches' array.
    */
   unsigned int watches_size;
@@ -252,6 +262,51 @@ struct GNUNET_STATISTICS_Handle
   int receiving;
 
 };
+
+
+/**
+ * Obtain statistics about this process's memory consumption and
+ * report those as well (if they changed).
+ */
+static void
+update_memory_statistics (struct GNUNET_STATISTICS_Handle *h)
+{
+#if ENABLE_HEAP_STATISTICS
+  uint64_t current_heap_size = 0;
+  uint64_t current_rss = 0;
+
+  if (GNUNET_NO != h->do_destroy)
+    return;
+#if HAVE_MALLINFO
+  {
+    struct mallinfo mi;
+    
+    mi = mallinfo();
+    current_heap_size = mi.uordblks + mi.fordblks;  
+  }
+#endif  
+#if HAVE_GETRUSAGE
+  {
+    struct rusage ru;
+
+    if (0 == getrusage (RUSAGE_SELF, &ru))
+    {
+      current_rss = 1024LL * ru.ru_maxrss;
+    }    
+  }
+#endif
+  if (current_heap_size > h->peak_heap_size)
+  {
+    h->peak_heap_size = current_heap_size;
+    GNUNET_STATISTICS_set (h, "# peak heap size", current_heap_size, GNUNET_NO);
+  }
+  if (current_rss > h->peak_rss)
+  {
+    h->peak_rss = current_rss;
+    GNUNET_STATISTICS_set (h, "# peak resident set size", current_rss, GNUNET_NO);
+  }
+#endif
+}
 
 
 /**
@@ -461,9 +516,7 @@ reconnect_later (struct GNUNET_STATISTICS_Handle *h)
   }
   h->backoff_task =
     GNUNET_SCHEDULER_add_delayed (h->backoff, &reconnect_task, h);
-  h->backoff = GNUNET_TIME_relative_multiply (h->backoff, 2);
-  h->backoff =
-    GNUNET_TIME_relative_min (h->backoff, GNUNET_CONSTANTS_SERVICE_TIMEOUT);
+  h->backoff = GNUNET_TIME_STD_BACKOFF (h->backoff);
 }
 
 
@@ -820,6 +873,7 @@ transmit_set (struct GNUNET_STATISTICS_Handle *handle, size_t size, void *buf)
   GNUNET_assert (NULL == handle->current->cont);
   free_action_item (handle->current);
   handle->current = NULL;
+  update_memory_statistics (handle);
   return nsize;
 }
 
@@ -875,6 +929,9 @@ GNUNET_STATISTICS_create (const char *subsystem,
 {
   struct GNUNET_STATISTICS_Handle *ret;
 
+  if (GNUNET_YES ==
+      GNUNET_CONFIGURATION_get_value_yesno (cfg, "statistics", "DISABLE"))
+    return NULL;
   GNUNET_assert (NULL != subsystem);
   GNUNET_assert (NULL != cfg);
   ret = GNUNET_malloc (sizeof (struct GNUNET_STATISTICS_Handle));

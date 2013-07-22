@@ -233,11 +233,6 @@ static unsigned int target_connection_count;
  */
 static unsigned int friend_count;
 
-/**
- * Should the topology daemon try to establish connections?
- */
-static int autoconnect;
-
 
 /**
  * Function that decides if a connection is acceptable or not.
@@ -316,7 +311,7 @@ is_connection_allowed (struct Peer *peer)
  * @return GNUNET_YES (always: continue to iterate)
  */
 static int
-free_peer (void *cls, const GNUNET_HashCode * pid, void *value)
+free_peer (void *cls, const struct GNUNET_HashCode * pid, void *value)
 {
   struct Peer *pos = value;
 
@@ -391,7 +386,7 @@ attempt_connect (struct Peer *pos)
                             gettext_noop
                             ("# connect requests issued to transport"), 1,
                             GNUNET_NO);
-  GNUNET_TRANSPORT_try_connect (transport, &pos->pid);
+  GNUNET_TRANSPORT_try_connect (transport, &pos->pid, NULL, NULL); /*FIXME TRY_CONNECT change */
 }
 
 
@@ -573,7 +568,7 @@ struct FindAdvHelloContext
  * @return GNUNET_YES (continue iteration)
  */
 static int
-find_advertisable_hello (void *cls, const GNUNET_HashCode * pid, void *value)
+find_advertisable_hello (void *cls, const struct GNUNET_HashCode * pid, void *value)
 {
   struct FindAdvHelloContext *fah = cls;
   struct Peer *pos = value;
@@ -659,7 +654,7 @@ schedule_next_hello (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
  * @return GNUNET_YES (always)
  */
 static int
-reschedule_hellos (void *cls, const GNUNET_HashCode * pid, void *value)
+reschedule_hellos (void *cls, const struct GNUNET_HashCode * pid, void *value)
 {
   struct Peer *peer = value;
   struct Peer *skip = cls;
@@ -743,7 +738,7 @@ connect_notify (void *cls, const struct GNUNET_PeerIdentity *peer,
  * @return GNUNET_YES (continue to iterate)
  */
 static int
-try_add_peers (void *cls, const GNUNET_HashCode * pid, void *value)
+try_add_peers (void *cls, const struct GNUNET_HashCode * pid, void *value)
 {
   struct Peer *pos = value;
 
@@ -1022,15 +1017,15 @@ read_friends_file (const struct GNUNET_CONFIGURATION_Handle *cfg)
   if (GNUNET_OK !=
       GNUNET_CONFIGURATION_get_value_filename (cfg, "TOPOLOGY", "FRIENDS", &fn))
   {
-    GNUNET_log (GNUNET_ERROR_TYPE_WARNING,
-                _("Option `%s' in section `%s' not specified!\n"), "FRIENDS",
-                "TOPOLOGY");
+    GNUNET_log_config_missing (GNUNET_ERROR_TYPE_ERROR,
+			       "topology", "FRIENDS");
     return;
   }
-  if (GNUNET_OK != GNUNET_DISK_file_test (fn))
-    GNUNET_DISK_fn_write (fn, NULL, 0,
-                          GNUNET_DISK_PERM_USER_READ |
-                          GNUNET_DISK_PERM_USER_WRITE);
+  if ( (GNUNET_OK != GNUNET_DISK_file_test (fn)) &&
+       (GNUNET_OK != GNUNET_DISK_fn_write (fn, NULL, 0,
+					   GNUNET_DISK_PERM_USER_READ |
+					   GNUNET_DISK_PERM_USER_WRITE)) )
+      GNUNET_log_strerror_file (GNUNET_ERROR_TYPE_WARNING, "write", fn);
   if (GNUNET_OK != GNUNET_DISK_file_size (fn,
       &fsize, GNUNET_NO, GNUNET_YES))
   {
@@ -1293,8 +1288,6 @@ run (void *cls, char *const *args, const char *cfgfile,
 
   cfg = c;
   stats = GNUNET_STATISTICS_create ("topology", cfg);
-  autoconnect =
-      GNUNET_CONFIGURATION_get_value_yesno (cfg, "TOPOLOGY", "AUTOCONNECT");
   friends_only =
       GNUNET_CONFIGURATION_get_value_yesno (cfg, "TOPOLOGY", "FRIENDS-ONLY");
   if (GNUNET_OK !=
@@ -1307,19 +1300,18 @@ run (void *cls, char *const *args, const char *cfgfile,
                                              "TARGET-CONNECTION-COUNT", &opt))
     opt = 16;
   target_connection_count = (unsigned int) opt;
-  peers = GNUNET_CONTAINER_multihashmap_create (target_connection_count * 2);
+  peers = GNUNET_CONTAINER_multihashmap_create (target_connection_count * 2, GNUNET_NO);
 
   if ((friends_only == GNUNET_YES) || (minimum_friend_count > 0))
     read_friends_file (cfg);
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
-              "Topology would like %u connections with at least %u friends (%s)\n",
-              target_connection_count, minimum_friend_count,
-              autoconnect ? "autoconnect enabled" : "autoconnect disabled");
+              "Topology would like %u connections with at least %u friends\n",
+              target_connection_count, minimum_friend_count);
   if ((friend_count < minimum_friend_count) && (blacklist == NULL))
     blacklist = GNUNET_TRANSPORT_blacklist (cfg, &blacklist_check, NULL);
   transport = GNUNET_TRANSPORT_connect (cfg, NULL, NULL, NULL, NULL, NULL);
   handle =
-      GNUNET_CORE_connect (cfg, 1, NULL, &core_init, &connect_notify,
+      GNUNET_CORE_connect (cfg, NULL, &core_init, &connect_notify,
                            &disconnect_notify, NULL, GNUNET_NO, NULL, GNUNET_NO,
                            handlers);
   GNUNET_SCHEDULER_add_delayed (GNUNET_TIME_UNIT_FOREVER_REL, &cleaning_task,
@@ -1356,13 +1348,32 @@ main (int argc, char *const *argv)
   };
   int ret;
 
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+
   ret =
       (GNUNET_OK ==
        GNUNET_PROGRAM_run (argc, argv, "gnunet-daemon-topology",
                            _
                            ("GNUnet topology control (maintaining P2P mesh and F2F constraints)"),
                            options, &run, NULL)) ? 0 : 1;
+  GNUNET_free ((void*) argv);
   return ret;
 }
+
+
+#ifdef LINUX
+#include <malloc.h>
+
+/**
+ * MINIMIZE heap size (way below 128k) since this process doesn't need much.
+ */
+void __attribute__ ((constructor)) GNUNET_ARM_memory_init ()
+{
+  mallopt (M_TRIM_THRESHOLD, 4 * 1024);
+  mallopt (M_TOP_PAD, 1 * 1024);
+  malloc_trim (0);
+}
+#endif
 
 /* end of gnunet-daemon-topology.c */

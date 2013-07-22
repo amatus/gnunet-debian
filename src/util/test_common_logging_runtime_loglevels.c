@@ -42,6 +42,8 @@ static struct GNUNET_DISK_PipeHandle *pipe_stdout;
 
 static GNUNET_SCHEDULER_TaskIdentifier die_task;
 
+static GNUNET_SCHEDULER_TaskIdentifier read_task;
+
 static void
 runone (void);
 
@@ -50,13 +52,21 @@ end_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 {
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Ending phase %d, ok is %d\n", phase,
               ok);
-  if (0 != GNUNET_OS_process_kill (proc, SIGTERM))
+  if (NULL != proc)
   {
-    GNUNET_log_strerror (GNUNET_ERROR_TYPE_WARNING, "kill");
+    if (0 != GNUNET_OS_process_kill (proc, SIGTERM))
+    {
+      GNUNET_log_strerror (GNUNET_ERROR_TYPE_WARNING, "kill");
+    }
+    GNUNET_OS_process_wait (proc);
+    GNUNET_OS_process_destroy (proc);
+    proc = NULL;
   }
-  GNUNET_OS_process_wait (proc);
-  GNUNET_OS_process_destroy (proc);
-  proc = NULL;
+  if (GNUNET_SCHEDULER_NO_TASK != read_task)
+  {
+    GNUNET_SCHEDULER_cancel (read_task);
+    read_task = GNUNET_SCHEDULER_NO_TASK;
+  }
   GNUNET_DISK_pipe_close (pipe_stdout);
   if (ok == 1)
   {
@@ -158,12 +168,13 @@ int bytes;
 static void
 read_call (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 {
-  struct GNUNET_DISK_FileHandle *stdout_read_handle = cls;
+  const struct GNUNET_DISK_FileHandle *stdout_read_handle = cls;
   char level[8];
   long delay;
   long delays[8];
   int rd;
 
+  read_task = GNUNET_SCHEDULER_NO_TASK;
   rd = GNUNET_DISK_file_read (stdout_read_handle, buf_ptr,
                               sizeof (buf) - bytes);
   if (rd > 0)
@@ -173,9 +184,9 @@ read_call (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 #if VERBOSE
     FPRINTF (stderr, "got %d bytes, reading more\n", rd);
 #endif
-    GNUNET_SCHEDULER_add_read_file (GNUNET_TIME_UNIT_FOREVER_REL,
-                                    stdout_read_handle, &read_call,
-                                    (void *) stdout_read_handle);
+    read_task = GNUNET_SCHEDULER_add_read_file (GNUNET_TIME_UNIT_FOREVER_REL,
+						stdout_read_handle, &read_call,
+						(void*) stdout_read_handle);
     return;
   }
 
@@ -314,13 +325,14 @@ runone ()
     break;
   }
 
-  proc = GNUNET_OS_start_process (GNUNET_NO, NULL, pipe_stdout,
+  proc = GNUNET_OS_start_process (GNUNET_NO, GNUNET_OS_INHERIT_STD_OUT_AND_ERR, NULL, pipe_stdout,
 #if MINGW
                                   "test_common_logging_dummy",
 #else
                                   "./test_common_logging_dummy",
 #endif
                                   "test_common_logging_dummy", NULL);
+  GNUNET_assert (NULL != proc);
   putenv ("GNUNET_FORCE_LOG=");
   putenv ("GNUNET_LOG=");
 
@@ -339,9 +351,9 @@ runone ()
   buf_ptr = buf;
   memset (&buf, 0, sizeof (buf));
 
-  GNUNET_SCHEDULER_add_read_file (GNUNET_TIME_UNIT_FOREVER_REL,
-                                  stdout_read_handle, &read_call,
-                                  (void *) stdout_read_handle);
+  read_task = GNUNET_SCHEDULER_add_read_file (GNUNET_TIME_UNIT_FOREVER_REL,
+					      stdout_read_handle, &read_call,
+					      (void*) stdout_read_handle);
 }
 
 static void
@@ -351,34 +363,16 @@ task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
   runone ();
 }
 
-/**
- * Main method, starts scheduler with task1,
- * checks that "ok" is correct at the end.
- */
-static int
-check ()
-{
-  ok = 1;
-  GNUNET_SCHEDULER_run (&task, &ok);
-  return ok;
-}
-
 
 int
 main (int argc, char *argv[])
 {
-  int ret;
-
   GNUNET_log_setup ("test-common-logging-runtime-loglevels",
-#if VERBOSE
-                    "DEBUG",
-#else
                     "WARNING",
-#endif
                     NULL);
-  ret = check ();
-
-  return ret;
+  ok = 1;
+  GNUNET_SCHEDULER_run (&task, &ok);
+  return ok;
 }
 
 /* end of test_common_logging_runtime_loglevels.c */

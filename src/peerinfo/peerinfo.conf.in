@@ -1,9 +1,8 @@
 [peerinfo]
 AUTOSTART = YES
-@UNIXONLY@ PORT = 2090
+@JAVAPORT@PORT = 2090
 HOSTNAME = localhost
 HOME = $SERVICEHOME
-CONFIG = $DEFAULTCONFIG
 BINARY = gnunet-service-peerinfo
 ACCEPT_FROM = 127.0.0.1;
 ACCEPT_FROM6 = ::1;
@@ -21,4 +20,9 @@ UNIX_MATCH_GID = YES
 # PREFIX =
 HOSTS = $SERVICEHOME/data/hosts/
 
+# Option to disable all disk IO; only useful for testbed runs
+# (large-scale experiments); disables persistence of HELLOs!
+NO_IO = NO
 
+[uri]
+hello = gnunet-peerinfo

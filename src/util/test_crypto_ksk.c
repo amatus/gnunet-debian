@@ -25,9 +25,9 @@
  */
 #include "platform.h"
 #include "gnunet_common.h"
-#include "gnunet_crypto_lib.h"
+#include "gnunet_util_lib.h"
 #include "gnunet_signatures.h"
-#include "gnunet_time_lib.h"
+
 
 #define TESTSTRING "Hello World\0"
 #define MAX_TESTVAL 20
@@ -40,7 +40,7 @@ testCorrectKey ()
 {
   const char *want =
       "010601000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b73c215f7a5e6b09bec55713c901786c09324a150980e014bdb0d04426934929c3b4971a9711af5455536cd6eeb8bfa004ee904972a737455f53c752987d8c82b755bc02882b44950c4acdc1672ba74c3b94d81a4c1ea3d74e7700ae5594c3a4f3c559e4bff2df6844fac302e4b66175e14dc8bad3ce44281d2fec1a1abef06301010000";
-  GNUNET_HashCode in;
+  struct GNUNET_HashCode in;
   struct GNUNET_CRYPTO_RsaPrivateKey *hostkey;
   struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded pkey;
   int i;
@@ -79,7 +79,7 @@ testCorrectKey ()
 static int
 testMultiKey (const char *word)
 {
-  GNUNET_HashCode in;
+  struct GNUNET_HashCode in;
   struct GNUNET_CRYPTO_RsaPrivateKey *hostkey;
   struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded pkey;
   struct GNUNET_CRYPTO_RsaPublicKeyBinaryEncoded pkey1;
@@ -167,9 +167,10 @@ testEncryptDecrypt (struct GNUNET_CRYPTO_RsaPrivateKey *hostkey)
       continue;
     }
   }
-  printf ("%d RSA encrypt/decrypt operations %llums (%d failures)\n", ITER,
-          (unsigned long long)
-          GNUNET_TIME_absolute_get_duration (start).rel_value, ok);
+  printf ("%d RSA encrypt/decrypt operations %s (%d failures)\n", 
+	  ITER,
+	  GNUNET_STRINGS_relative_time_to_string (GNUNET_TIME_absolute_get_duration (start), GNUNET_YES), 
+	  ok);
   if (ok == 0)
     return GNUNET_OK;
   else
@@ -217,9 +218,9 @@ testSignVerify (struct GNUNET_CRYPTO_RsaPrivateKey *hostkey)
       continue;
     }
   }
-  printf ("%d RSA sign/verify operations %llums\n", ITER,
-          (unsigned long long)
-          GNUNET_TIME_absolute_get_duration (start).rel_value);
+  printf ("%d RSA sign/verify operations %s\n", 
+	  ITER,
+	  GNUNET_STRINGS_relative_time_to_string (GNUNET_TIME_absolute_get_duration (start), GNUNET_YES));
   return ok;
 }
 
@@ -228,7 +229,7 @@ int
 main (int argc, char *argv[])
 {
   int failureCount = 0;
-  GNUNET_HashCode in;
+  struct GNUNET_HashCode in;
   struct GNUNET_CRYPTO_RsaPrivateKey *hostkey;
 
   GNUNET_log_setup ("test-crypto-ksk", "WARNING", NULL);

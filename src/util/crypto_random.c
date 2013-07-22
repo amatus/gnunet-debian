@@ -1,6 +1,6 @@
 /*
      This file is part of GNUnet.
-     (C) 2001, 2002, 2003, 2004, 2005, 2006 Christian Grothoff (and other contributing authors)
+     (C) 2001, 2002, 2003, 2004, 2005, 2006, 2012 Christian Grothoff (and other contributing authors)
 
      GNUnet is free software; you can redistribute it and/or modify
      it under the terms of the GNU General Public License as published
@@ -34,6 +34,14 @@
 
 #define LOG_STRERROR(kind,syscall) GNUNET_log_from_strerror (kind, "util", syscall)
 
+
+/**
+ * GNUNET_YES if we are using a 'weak' (low-entropy) PRNG.
+ */ 
+static int weak_random;
+
+
+
 /* TODO: ndurner, move this to plibc? */
 /* The code is derived from glibc, obviously */
 #if MINGW
@@ -45,13 +53,21 @@
 #endif
 #define RANDOM() glibc_weak_rand32()
 #define SRANDOM(s) glibc_weak_srand32(s)
+#if defined(RAND_MAX)
+#undef RAND_MAX
+#endif
+#define RAND_MAX 0x7fffffff /* Hopefully this is correct */
+
+
 static int32_t glibc_weak_rand32_state = 1;
+
 
 void
 glibc_weak_srand32 (int32_t s)
 {
   glibc_weak_rand32_state = s;
 }
+
 
 int32_t
 glibc_weak_rand32 ()
@@ -70,10 +86,11 @@ glibc_weak_rand32 ()
  * @return number between 0 and 1.
  */
 static double
-weak_random ()
+get_weak_random ()
 {
   return ((double) RANDOM () / RAND_MAX);
 }
+
 
 /**
  * Seed a weak random generator. Only GNUNET_CRYPTO_QUALITY_WEAK-mode generator
@@ -86,6 +103,7 @@ GNUNET_CRYPTO_seed_weak_random (int32_t seed)
 {
   SRANDOM (seed);
 }
+
 
 /**
  * Produce a random value.
@@ -130,7 +148,7 @@ GNUNET_CRYPTO_random_u32 (enum GNUNET_CRYPTO_Quality mode, uint32_t i)
     while (ret >= ul);
     return ret % i;
   case GNUNET_CRYPTO_QUALITY_WEAK:
-    ret = i * weak_random ();
+    ret = i * get_weak_random ();
     if (ret >= i)
       ret = i - 1;
     return ret;
@@ -207,7 +225,7 @@ GNUNET_CRYPTO_random_u64 (enum GNUNET_CRYPTO_Quality mode, uint64_t max)
 
     return ret % max;
   case GNUNET_CRYPTO_QUALITY_WEAK:
-    ret = max * weak_random ();
+    ret = max * get_weak_random ();
     if (ret >= max)
       ret = max - 1;
     return ret;
@@ -217,6 +235,19 @@ GNUNET_CRYPTO_random_u64 (enum GNUNET_CRYPTO_Quality mode, uint64_t max)
   return 0;
 }
 
+
+/**
+ * Check if we are using weak random number generation.
+ *
+ * @return GNUNET_YES if weak number generation is on
+ */
+int
+GNUNET_CRYPTO_random_is_weak ()
+{
+  return weak_random;
+}
+
+
 /**
  * This function should only be called in testcases
  * where strong entropy gathering is not desired
@@ -225,6 +256,7 @@ GNUNET_CRYPTO_random_u64 (enum GNUNET_CRYPTO_Quality mode, uint64_t max)
 void
 GNUNET_CRYPTO_random_disable_entropy_gathering ()
 {
+  weak_random = GNUNET_YES;
   gcry_control (GCRYCTL_ENABLE_QUICK_RANDOM, 0);
 }
 
@@ -234,6 +266,7 @@ GNUNET_CRYPTO_random_disable_entropy_gathering ()
  * entropy gathering.
  */
 static struct GNUNET_OS_Process *genproc;
+
 
 /**
  * Function called by libgcrypt whenever we are
@@ -253,7 +286,7 @@ entropy_generator (void *cls, const char *what, int printchar, int current,
   {
     if (genproc != NULL)
     {
-      if (0 != GNUNET_OS_process_kill (genproc, SIGTERM))
+      if (0 != GNUNET_OS_process_kill (genproc, SIGKILL))
         LOG_STRERROR (GNUNET_ERROR_TYPE_ERROR, "kill");
       GNUNET_break (GNUNET_OK == GNUNET_OS_process_wait (genproc));
       GNUNET_OS_process_destroy (genproc);
@@ -271,7 +304,7 @@ entropy_generator (void *cls, const char *what, int printchar, int current,
       GNUNET_break (0);
       return;
     }
-    if (0 != GNUNET_OS_process_kill (genproc, SIGTERM))
+    if (0 != GNUNET_OS_process_kill (genproc, SIGKILL))
       LOG_STRERROR (GNUNET_ERROR_TYPE_ERROR, "kill");
     GNUNET_break (GNUNET_OK == GNUNET_OS_process_wait (genproc));
     GNUNET_OS_process_destroy (genproc);
@@ -280,7 +313,7 @@ entropy_generator (void *cls, const char *what, int printchar, int current,
   LOG (GNUNET_ERROR_TYPE_INFO, _("Starting `%s' process to generate entropy\n"),
        "find");
   genproc =
-     GNUNET_OS_start_process (GNUNET_NO,
+     GNUNET_OS_start_process (GNUNET_NO, 0, 
 			      NULL, NULL, "sh", "sh", "-c",
 			      "exec find / -mount -type f -exec cp {} /dev/null \\; 2>/dev/null",
 			      NULL);
@@ -302,12 +335,12 @@ killfind ()
 void __attribute__ ((constructor)) GNUNET_CRYPTO_random_init ()
 {
   gcry_control (GCRYCTL_DISABLE_SECMEM, 0);
-  if (!gcry_check_version (GCRYPT_VERSION))
+  if (!gcry_check_version (NEED_LIBGCRYPT_VERSION))
   {
     FPRINTF (stderr,
              _
              ("libgcrypt has not the expected version (version %s is required).\n"),
-             GCRYPT_VERSION);
+             NEED_LIBGCRYPT_VERSION);
     GNUNET_abort ();
   }
 #ifdef GCRYCTL_INITIALIZATION_FINISHED

@@ -140,6 +140,168 @@ GNUNET_CONFIGURATION_destroy (struct GNUNET_CONFIGURATION_Handle *cfg)
 
 
 /**
+ * De-serializes configuration
+ *
+ * @param cfg configuration to update
+ * @param mem the memory block of serialized configuration
+ * @param size the size of the memory block
+ * @param allow_inline set to GNUNET_YES if we recursively load configuration
+ *          from inlined configurations; GNUNET_NO if not and raise warnings
+ *          when we come across them
+ * @return GNUNET_OK on success, GNUNET_ERROR on error
+ */
+int
+GNUNET_CONFIGURATION_deserialize (struct GNUNET_CONFIGURATION_Handle *cfg,
+				  const char *mem,
+				  const size_t size,
+				  int allow_inline)
+{
+  char *line;
+  char *line_orig;
+  size_t line_size;
+  char *pos;
+  unsigned int nr;
+  size_t r_bytes;
+  size_t to_read;
+  size_t i;
+  int emptyline;
+  int ret;
+  char *section;
+  char *eq;
+  char *tag;
+  char *value;
+
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Deserializing config file\n");
+  ret = GNUNET_OK;
+  section = GNUNET_strdup ("");
+  nr = 0;
+  r_bytes = 0;
+  line_orig = NULL;
+  while (r_bytes < size)
+  {
+    GNUNET_free_non_null (line_orig);
+    /* fgets-like behaviour on buffer */
+    to_read = size - r_bytes;
+    pos = memchr (&mem[r_bytes], '\n', to_read);
+    if (NULL == pos)
+    {
+      line_orig = GNUNET_strndup (&mem[r_bytes], line_size = to_read);
+      r_bytes += line_size;    
+    }
+    else
+    {
+      line_orig = GNUNET_strndup (&mem[r_bytes], line_size = (pos - &mem[r_bytes]));
+      r_bytes += line_size + 1;
+    }
+    line = line_orig;
+    /* increment line number */
+    nr++;
+    /* tabs and '\r' are whitespace */
+    emptyline = GNUNET_YES;
+    for (i = 0; i < line_size; i++)
+    {
+      if (line[i] == '\t')
+        line[i] = ' ';
+      if (line[i] == '\r')
+        line[i] = ' ';
+      if (' ' != line[i])
+        emptyline = GNUNET_NO;
+    }
+    /* ignore empty lines */
+    if (GNUNET_YES == emptyline)
+      continue;
+
+    /* remove tailing whitespace */
+    for (i = line_size - 1; (i >= 1) && (isspace ((unsigned char) line[i]));i--)
+      line[i] = '\0';
+
+    /* remove leading whitespace */
+    for (; line[0] != '\0' && (isspace ((unsigned char) line[0])); line++);
+
+    /* ignore comments */
+    if ( ('#' == line[0]) || ('%' == line[0]) )
+      continue;
+
+    /* handle special "@INLINE@" directive */
+    if (0 == strncasecmp (line, 
+			  "@INLINE@ ",
+			  strlen ("@INLINE@ ")))
+    {      
+      /* @INLINE@ value */
+      value = &line[strlen ("@INLINE@ ")];
+      if (GNUNET_YES == allow_inline)
+      {
+	if (GNUNET_OK != GNUNET_CONFIGURATION_parse (cfg, value))
+	{
+	  ret = GNUNET_SYSERR;    /* failed to parse included config */
+	  break;
+	}
+      }
+      else
+      {
+	LOG (GNUNET_ERROR_TYPE_DEBUG,
+	     "Ignoring parsing @INLINE@ configurations, not allowed!\n");
+	ret = GNUNET_SYSERR;
+	break;
+      }
+      continue;
+    }
+    if ( ('[' == line[0]) && (']' == line[line_size - 1]) )
+    {
+      /* [value] */
+      line[line_size - 1] = '\0';
+      value = &line[1];
+      GNUNET_free (section);
+      section = GNUNET_strdup (value);
+      LOG (GNUNET_ERROR_TYPE_DEBUG, 
+	   "Config section `%s'\n", 
+	   section);
+      continue;
+    }
+    if (NULL != (eq = strchr (line, '=')))
+    {
+      /* tag = value */
+      tag = GNUNET_strndup (line, eq - line); 
+      /* remove tailing whitespace */
+      for (i = strlen (tag) - 1; (i >= 1) && (isspace ((unsigned char) tag[i]));i--)
+	tag[i] = '\0';
+      
+      /* Strip whitespace */
+      value = eq + 1;
+      while (isspace ((unsigned char) value[0]))
+	value++;
+      for (i = strlen (value) - 1; (i >= 1) && (isspace ((unsigned char) value[i]));i--)
+	value[i] = '\0';
+
+      /* remove quotes */
+      i = 0;
+      if ( ('"' == value[0]) &&
+	   ('"' == value[strlen (value) - 1]) )
+      {
+	value[strlen (value) - 1] = '\0';
+	value++;
+      }
+      LOG (GNUNET_ERROR_TYPE_DEBUG, "Config value %s=\"%s\"\n", tag, value);
+      GNUNET_CONFIGURATION_set_value_string (cfg, section, tag, &value[i]);
+      GNUNET_free (tag);
+      continue;
+    }
+    /* parse error */
+    LOG (GNUNET_ERROR_TYPE_WARNING,
+	 _("Syntax error while deserializing in line %u\n"), 
+	 nr);
+    ret = GNUNET_SYSERR;
+    break;
+  }
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Finished deserializing config\n");
+  GNUNET_free_non_null (line_orig);
+  GNUNET_free (section);  
+  GNUNET_assert ( (GNUNET_OK != ret) || (r_bytes == size) );
+  return ret;
+}
+
+
+/**
  * Parse a configuration file, add all of the options in the
  * file to the configuration environment.
  *
@@ -151,107 +313,50 @@ int
 GNUNET_CONFIGURATION_parse (struct GNUNET_CONFIGURATION_Handle *cfg,
                             const char *filename)
 {
-  int dirty;
-  char line[256];
-  char tag[64];
-  char value[192];
-  FILE *fp;
-  unsigned int nr;
-  int i;
-  int emptyline;
-  int ret;
-  char *section;
+  uint64_t fs64;
+  size_t fs;
   char *fn;
+  char *mem;
+  int dirty;
+  int ret;
 
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Asked to parse config file `%s'\n", filename);
   fn = GNUNET_STRINGS_filename_expand (filename);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Config file name expanded to `%s'\n", fn);
   if (fn == NULL)
     return GNUNET_SYSERR;
   dirty = cfg->dirty;           /* back up value! */
-  if (NULL == (fp = FOPEN (fn, "r")))
+  if (GNUNET_SYSERR == 
+       GNUNET_DISK_file_size (fn, &fs64, GNUNET_YES, GNUNET_YES))
   {
-    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "fopen", fn);
+    LOG (GNUNET_ERROR_TYPE_WARNING,
+	 "Error while determining the file size of %s\n", fn);
     GNUNET_free (fn);
     return GNUNET_SYSERR;
   }
-  GNUNET_free (fn);
-  ret = GNUNET_OK;
-  section = GNUNET_strdup ("");
-  memset (line, 0, 256);
-  nr = 0;
-  while (NULL != fgets (line, 255, fp))
+  if (fs64 > SIZE_MAX)
   {
-    nr++;
-    for (i = 0; i < 255; i++)
-      if (line[i] == '\t')
-        line[i] = ' ';
-    if (line[0] == '\n' || line[0] == '#' || line[0] == '%' || line[0] == '\r')
-      continue;
-    emptyline = 1;
-    for (i = 0; (i < 255 && line[i] != 0); i++)
-      if (line[i] != ' ' && line[i] != '\n' && line[i] != '\r')
-        emptyline = 0;
-    if (emptyline == 1)
-      continue;
-    /* remove tailing whitespace */
-    for (i = strlen (line) - 1; (i >= 0) && (isspace ((unsigned char) line[i]));
-         i--)
-      line[i] = '\0';
-    if (1 == SSCANF (line, "@INLINE@ %191[^\n]", value))
-    {
-      /* @INLINE@ value */
-      if (GNUNET_OK != GNUNET_CONFIGURATION_parse (cfg, value))
-        ret = GNUNET_SYSERR;    /* failed to parse included config */
-    }
-    else if (1 == SSCANF (line, "[%99[^]]]", value))
-    {
-      /* [value] */
-      GNUNET_free (section);
-      section = GNUNET_strdup (value);
-    }
-    else if (2 == SSCANF (line, " %63[^= ] = %191[^\n]", tag, value))
-    {
-      /* tag = value */
-      /* Strip LF */
-      i = strlen (value) - 1;
-      while ((i >= 0) && (isspace ((unsigned char) value[i])))
-        value[i--] = '\0';
-      /* remove quotes */
-      i = 0;
-      if (value[0] == '"')
-      {
-        i = 1;
-        while ((value[i] != '\0') && (value[i] != '"'))
-          i++;
-        if (value[i] == '"')
-        {
-          value[i] = '\0';
-          i = 1;
-        }
-        else
-          i = 0;
-      }
-      GNUNET_CONFIGURATION_set_value_string (cfg, section, tag, &value[i]);
-    }
-    else if (1 == SSCANF (line, " %63[^= ] =[^\n]", tag))
-    {
-      /* tag = */
-      GNUNET_CONFIGURATION_set_value_string (cfg, section, tag, "");
-    }
-    else
-    {
-      /* parse error */
-      LOG (GNUNET_ERROR_TYPE_WARNING,
-           _("Syntax error in configuration file `%s' at line %u.\n"), filename,
-           nr);
-      ret = GNUNET_SYSERR;
-      break;
-    }
+    GNUNET_break (0); 		/* File size is more than the heap size */
+    GNUNET_free (fn);
+    return GNUNET_SYSERR;
   }
-  GNUNET_assert (0 == FCLOSE (fp));
+  fs = fs64;
+  mem = GNUNET_malloc (fs);
+  if (fs != GNUNET_DISK_fn_read (fn, mem, fs))
+  {
+    LOG (GNUNET_ERROR_TYPE_WARNING,
+	 "Error while reading file %s\n", fn);
+    GNUNET_free (fn);
+    GNUNET_free (mem);
+    return GNUNET_SYSERR;
+  }
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Deserializing contents of file `%s'\n", fn);
+  GNUNET_free (fn);
+  ret = GNUNET_CONFIGURATION_deserialize (cfg, mem, fs, GNUNET_YES);  
+  GNUNET_free (mem);
   /* restore dirty flag - anything we set in the meantime
    * came from disk */
   cfg->dirty = dirty;
-  GNUNET_free (section);
   return ret;
 }
 
@@ -271,6 +376,102 @@ GNUNET_CONFIGURATION_is_dirty (const struct GNUNET_CONFIGURATION_Handle *cfg)
 
 
 /**
+ * Serializes the given configuration.
+ *
+ * @param cfg configuration to serialize
+ * @param size will be set to the size of the serialized memory block
+ * @return the memory block where the serialized configuration is
+ *           present. This memory should be freed by the caller
+ */
+char *
+GNUNET_CONFIGURATION_serialize (const struct GNUNET_CONFIGURATION_Handle *cfg,
+				size_t *size)
+{
+  struct ConfigSection *sec;
+  struct ConfigEntry *ent;
+  char *mem;
+  char *cbuf;
+  char *val;
+  char *pos;
+  int len;
+  size_t m_size;
+  size_t c_size;
+
+
+  /* Pass1 : calculate the buffer size required */
+  m_size = 0;
+  sec = cfg->sections;
+  while (NULL != sec)
+  {
+    /* For each section we need to add 3 charaters: {'[',']','\n'} */
+    m_size += strlen (sec->name) + 3;
+    ent = sec->entries;
+    while (NULL != ent)
+    {
+      if (NULL != ent->val)
+      {
+	/* if val has any '\n' then they occupy +1 character as '\n'->'\\','n' */
+	pos = ent->val;
+	while (NULL != (pos = strstr (pos, "\n")))
+	{
+	  m_size++;
+	  pos++;
+	}
+	/* For each key = value pair we need to add 4 characters (2
+	   spaces and 1 equal-to character and 1 new line) */
+	m_size += strlen (ent->key) + strlen (ent->val) + 4;	
+      }
+      ent = ent->next;
+    }
+    /* A new line after section end */
+    m_size++;
+    sec = sec->next;
+  }
+
+  /* Pass2: Allocate memory and write the configuration to it */
+  mem = GNUNET_malloc (m_size);
+  sec = cfg->sections;
+  c_size = 0;
+  *size = c_size;  
+  while (NULL != sec)
+  {
+    len = GNUNET_asprintf (&cbuf, "[%s]\n", sec->name);
+    GNUNET_assert (0 < len);
+    memcpy (mem + c_size, cbuf, len);
+    c_size += len;
+    GNUNET_free (cbuf);
+    ent = sec->entries;
+    while (NULL != ent)
+    {
+      if (NULL != ent->val)
+      {
+	val = GNUNET_malloc (strlen (ent->val) * 2 + 1);
+	strcpy (val, ent->val);
+        while (NULL != (pos = strstr (val, "\n")))
+        {
+          memmove (&pos[2], &pos[1], strlen (&pos[1]));
+          pos[0] = '\\';
+          pos[1] = 'n';
+        }
+	len = GNUNET_asprintf (&cbuf, "%s = %s\n", ent->key, val);
+	GNUNET_free (val);
+	memcpy (mem + c_size, cbuf, len);
+	c_size += len;
+	GNUNET_free (cbuf);	
+      }
+      ent = ent->next;
+    }
+    memcpy (mem + c_size, "\n", 1);
+    c_size ++;
+    sec = sec->next;
+  }
+  GNUNET_assert (c_size == m_size);
+  *size = c_size;
+  return mem;
+}
+
+
+/**
  * Write configuration file.
  *
  * @param cfg configuration to write
@@ -281,13 +482,9 @@ int
 GNUNET_CONFIGURATION_write (struct GNUNET_CONFIGURATION_Handle *cfg,
                             const char *filename)
 {
-  struct ConfigSection *sec;
-  struct ConfigEntry *ent;
-  FILE *fp;
-  int error;
   char *fn;
-  char *val;
-  char *pos;
+  char *cfg_buf;
+  size_t size;
 
   fn = GNUNET_STRINGS_filename_expand (filename);
   if (fn == NULL)
@@ -297,62 +494,22 @@ GNUNET_CONFIGURATION_write (struct GNUNET_CONFIGURATION_Handle *cfg,
     GNUNET_free (fn);
     return GNUNET_SYSERR;
   }
-  if (NULL == (fp = FOPEN (fn, "w")))
+  cfg_buf = GNUNET_CONFIGURATION_serialize (cfg, &size);
+  if (size != GNUNET_DISK_fn_write (fn, cfg_buf, size,
+				    GNUNET_DISK_PERM_USER_READ 
+				    | GNUNET_DISK_PERM_USER_WRITE
+				    | GNUNET_DISK_PERM_GROUP_READ 
+				    | GNUNET_DISK_PERM_GROUP_WRITE))
   {
-    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "fopen", fn);
     GNUNET_free (fn);
-    return GNUNET_SYSERR;
-  }
-  GNUNET_free (fn);
-  error = 0;
-  sec = cfg->sections;
-  while (sec != NULL)
-  {
-    if (0 > FPRINTF (fp, "[%s]\n", sec->name))
-    {
-      error = 1;
-      break;
-    }
-    ent = sec->entries;
-    while (ent != NULL)
-    {
-      if (ent->val != NULL)
-      {
-        val = GNUNET_malloc (strlen (ent->val) * 2 + 1);
-        strcpy (val, ent->val);
-        while (NULL != (pos = strstr (val, "\n")))
-        {
-          memmove (&pos[2], &pos[1], strlen (&pos[1]));
-          pos[0] = '\\';
-          pos[1] = 'n';
-        }
-        if (0 > FPRINTF (fp, "%s = %s\n", ent->key, val))
-        {
-          error = 1;
-          GNUNET_free (val);
-          break;
-        }
-        GNUNET_free (val);
-      }
-      ent = ent->next;
-    }
-    if (error != 0)
-      break;
-    if (0 > FPRINTF (fp, "%s\n", ""))
-    {
-      error = 1;
-      break;
-    }
-    sec = sec->next;
-  }
-  if (error != 0)
-    LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "fprintf", filename);
-  GNUNET_assert (0 == FCLOSE (fp));
-  if (error != 0)
-  {
+    GNUNET_free (cfg_buf);
+    LOG (GNUNET_ERROR_TYPE_WARNING,
+	 "Writing configration to file: %s failed\n", filename);
     cfg->dirty = GNUNET_SYSERR; /* last write failed */
     return GNUNET_SYSERR;
   }
+  GNUNET_free (fn);
+  GNUNET_free (cfg_buf);
   cfg->dirty = GNUNET_NO;       /* last write succeeded */
   return GNUNET_OK;
 }
@@ -579,8 +736,8 @@ findEntry (const struct GNUNET_CONFIGURATION_Handle *cfg, const char *section,
  * @param value value to copy (of the default conf.)
  */
 static void
-compareEntries (void *cls, const char *section, const char *option,
-                const char *value)
+compare_entries (void *cls, const char *section, const char *option,
+		 const char *value)
 {
   struct DiffHandle *dh = cls;
   struct ConfigEntry *entNew;
@@ -589,6 +746,28 @@ compareEntries (void *cls, const char *section, const char *option,
   if ((entNew != NULL) && (strcmp (entNew->val, value) == 0))
     return;
   GNUNET_CONFIGURATION_set_value_string (dh->cfgDiff, section, option, value);
+}
+
+
+/**
+ * Compute configuration with only entries that have been changed
+ *
+ * @param cfgDefault original configuration
+ * @param cfgNew new configuration
+ * @return configuration with only the differences, never NULL
+ */
+struct GNUNET_CONFIGURATION_Handle *
+GNUNET_CONFIGURATION_get_diff (const struct GNUNET_CONFIGURATION_Handle
+			       *cfgDefault,
+			       const struct GNUNET_CONFIGURATION_Handle
+			       *cfgNew)
+{
+  struct DiffHandle diffHandle;
+
+  diffHandle.cfgDiff = GNUNET_CONFIGURATION_create ();
+  diffHandle.cfgDefault = cfgDefault;
+  GNUNET_CONFIGURATION_iterate (cfgNew, &compare_entries, &diffHandle);
+  return diffHandle.cfgDiff;
 }
 
 
@@ -606,13 +785,11 @@ GNUNET_CONFIGURATION_write_diffs (const struct GNUNET_CONFIGURATION_Handle
                                   *cfgNew, const char *filename)
 {
   int ret;
-  struct DiffHandle diffHandle;
+  struct GNUNET_CONFIGURATION_Handle *diff;
 
-  diffHandle.cfgDiff = GNUNET_CONFIGURATION_create ();
-  diffHandle.cfgDefault = cfgDefault;
-  GNUNET_CONFIGURATION_iterate (cfgNew, compareEntries, &diffHandle);
-  ret = GNUNET_CONFIGURATION_write (diffHandle.cfgDiff, filename);
-  GNUNET_CONFIGURATION_destroy (diffHandle.cfgDiff);
+  diff = GNUNET_CONFIGURATION_get_diff (cfgDefault, cfgNew);
+  ret = GNUNET_CONFIGURATION_write (diff, filename);
+  GNUNET_CONFIGURATION_destroy (diff);
   return ret;
 }
 
@@ -632,12 +809,14 @@ GNUNET_CONFIGURATION_set_value_string (struct GNUNET_CONFIGURATION_Handle *cfg,
 {
   struct ConfigSection *sec;
   struct ConfigEntry *e;
+  char *nv;
 
   e = findEntry (cfg, section, option);
   if (e != NULL)
   {
+    nv = GNUNET_strdup (value);
     GNUNET_free_non_null (e->val);
-    e->val = GNUNET_strdup (value);
+    e->val = nv;
     return;
   }
   sec = findSection (cfg, section);
@@ -768,13 +947,16 @@ GNUNET_CONFIGURATION_get_value_string (const struct GNUNET_CONFIGURATION_Handle
 {
   struct ConfigEntry *e;
 
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Asked to retrieve string `%s' in section `%s'\n", option, section);
   e = findEntry (cfg, section, option);
   if ((e == NULL) || (e->val == NULL))
   {
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "Failed to retrieve the string\n");
     *value = NULL;
     return GNUNET_SYSERR;
   }
   *value = GNUNET_strdup (e->val);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Retrieved string `%s'\n", e->val);
   return GNUNET_OK;
 }
 
@@ -861,8 +1043,13 @@ GNUNET_CONFIGURATION_expand_dollar (const struct GNUNET_CONFIGURATION_Handle
   const char *post;
   const char *env;
 
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Asked to $-expand %s\n", orig);
+
   if (orig[0] != '$')
+  {
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "Doesn't start with $ - not expanding\n");
     return orig;
+  }
   i = 0;
   while ((orig[i] != '/') && (orig[i] != '\\') && (orig[i] != '\0'))
     i++;
@@ -875,16 +1062,21 @@ GNUNET_CONFIGURATION_expand_dollar (const struct GNUNET_CONFIGURATION_Handle
     orig[i] = '\0';
     post = &orig[i + 1];
   }
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Split into `%s' and `%s'\n", orig, post);
   if (GNUNET_OK !=
       GNUNET_CONFIGURATION_get_value_filename (cfg, "PATHS", &orig[1], &prefix))
   {
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "Filename for `%s' is not in PATHS config section\n", &orig[1]);
     if (NULL == (env = getenv (&orig[1])))
     {
+      LOG (GNUNET_ERROR_TYPE_DEBUG, "`%s' is not an environment variable\n", &orig[1]);
       orig[i] = DIR_SEPARATOR;
+      LOG (GNUNET_ERROR_TYPE_DEBUG, "Expanded to `%s' (returning orig)\n", orig);
       return orig;
     }
     prefix = GNUNET_strdup (env);
   }
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Prefix is `%s'\n", prefix);
   result = GNUNET_malloc (strlen (prefix) + strlen (post) + 2);
   strcpy (result, prefix);
   if ((strlen (prefix) == 0) ||
@@ -893,6 +1085,7 @@ GNUNET_CONFIGURATION_expand_dollar (const struct GNUNET_CONFIGURATION_Handle
   strcat (result, post);
   GNUNET_free (prefix);
   GNUNET_free (orig);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Expanded to `%s'\n", result);
   return result;
 }
 
@@ -914,16 +1107,21 @@ GNUNET_CONFIGURATION_get_value_filename (const struct
                                          const char *option, char **value)
 {
   char *tmp;
-
+  
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Asked to retrieve filename `%s' in section `%s'\n", option, section);
   if (GNUNET_OK !=
       GNUNET_CONFIGURATION_get_value_string (cfg, section, option, &tmp))
   {
+    LOG (GNUNET_ERROR_TYPE_DEBUG, "Failed to retrieve filename\n");
     *value = NULL;
     return GNUNET_SYSERR;
   }
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Retrieved filename `%s', $-expanding\n", tmp);
   tmp = GNUNET_CONFIGURATION_expand_dollar (cfg, tmp);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Expanded to filename `%s', *nix-expanding\n", tmp);
   *value = GNUNET_STRINGS_filename_expand (tmp);
   GNUNET_free (tmp);
+  LOG (GNUNET_ERROR_TYPE_DEBUG, "Filename result is `%s'\n", *value);
   if (*value == NULL)
     return GNUNET_SYSERR;
   return GNUNET_OK;

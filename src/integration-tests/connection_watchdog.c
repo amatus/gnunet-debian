@@ -121,7 +121,7 @@ struct TransportPlugin *ptail;
 
 static int 
 map_check_it (void *cls,
-	      const GNUNET_HashCode * key,
+	      const struct GNUNET_HashCode * key,
 	      void *value)
 {
   int *fail = cls;
@@ -142,7 +142,7 @@ map_check_it (void *cls,
 
 static int 
 map_cleanup_it (void *cls,
-		const GNUNET_HashCode * key,
+		const struct GNUNET_HashCode * key,
 		void *value)
 {
   struct PeerContainer *pc = value;
@@ -451,7 +451,7 @@ return mlen;
 
 
 int map_ping_it (void *cls,
-                  const GNUNET_HashCode * key,
+                  const struct GNUNET_HashCode * key,
                   void *value)
 {
   struct PeerContainer *pc = value;
@@ -572,6 +572,8 @@ map_connect (const struct GNUNET_PeerIdentity *peer, void * source)
   }
 
   pc = GNUNET_CONTAINER_multihashmap_get(peers, &peer->hashPubKey);
+  GNUNET_assert (NULL != pc);
+
   if (source == th)
   {
     if (GNUNET_NO == pc->transport_connected)
@@ -658,6 +660,8 @@ map_disconnect (const struct GNUNET_PeerIdentity * peer, void * source)
   }
 
   pc = GNUNET_CONTAINER_multihashmap_get(peers, &peer->hashPubKey);
+  GNUNET_assert (NULL != pc);
+
   if (source == th)
   {
     if (NULL != pc->th_ping)
@@ -1052,7 +1056,7 @@ run (void *cls, char *const *args, const char *cfgfile,
   init();
 
   stats = GNUNET_STATISTICS_create ("watchdog", cfg);
-  peers = GNUNET_CONTAINER_multihashmap_create (20);
+  peers = GNUNET_CONTAINER_multihashmap_create (32, GNUNET_NO);
 
   th = GNUNET_TRANSPORT_connect(cfg, NULL, NULL,
                                 &transport_notify_receive_cb,
@@ -1060,7 +1064,7 @@ run (void *cls, char *const *args, const char *cfgfile,
                                 &transport_notify_disconnect_cb);
   GNUNET_assert (th != NULL);
   GNUNET_log (GNUNET_ERROR_TYPE_INFO, "Connected to transport service\n");
-  ch =  GNUNET_CORE_connect (cfg, 1, NULL,
+  ch =  GNUNET_CORE_connect (cfg, NULL,
                              &core_init_cb,
                              &core_connect_cb,
                              &core_disconnect_cb,
@@ -1090,10 +1094,15 @@ main (int argc, char *const *argv)
     GNUNET_NO, &GNUNET_GETOPT_set_one, &ping},
     GNUNET_GETOPT_OPTION_END
   };
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "cn",
-                              gettext_noop ("help text"), options, &run,
-                              NULL)) ? ret : 1;
+
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+  ret = (GNUNET_OK ==
+	 GNUNET_PROGRAM_run (argc, argv, "cn",
+			     gettext_noop ("help text"), options, &run,
+			     NULL)) ? ret : 1;
+  GNUNET_free ((void*) argv);
+  return ret;
 }
 
 /* end of connection_watchdog.c */

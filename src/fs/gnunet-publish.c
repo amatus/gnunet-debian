@@ -28,7 +28,7 @@
 #include "platform.h"
 #include "gnunet_fs_service.h"
 
-static int ret;
+static int ret = 1;
 
 static int verbose;
 
@@ -105,8 +105,11 @@ static void
 stop_scanner_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 {
   kill_task = GNUNET_SCHEDULER_NO_TASK;
-  GNUNET_FS_directory_scan_abort (ds);
-  ds = NULL;
+  if (NULL != ds)
+  {
+    GNUNET_FS_directory_scan_abort (ds);
+    ds = NULL;
+  } 
   if (namespace != NULL)
   {
     GNUNET_FS_namespace_delete (namespace, GNUNET_NO);
@@ -134,7 +137,8 @@ stop_scanner_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 static void *
 progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
 {
-  char *s;
+  const char *s;
+  char *suri;
 
   switch (info->status)
   {
@@ -143,12 +147,12 @@ progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
   case GNUNET_FS_STATUS_PUBLISH_PROGRESS:
     if (verbose)
     {
-      s = GNUNET_STRINGS_relative_time_to_string (info->value.publish.eta);
+      s = GNUNET_STRINGS_relative_time_to_string (info->value.publish.eta,
+						  GNUNET_YES);
       FPRINTF (stdout, _("Publishing `%s' at %llu/%llu (%s remaining)\n"),
                info->value.publish.filename,
                (unsigned long long) info->value.publish.completed,
                (unsigned long long) info->value.publish.size, s);
-      GNUNET_free (s);
     }
     break;
   case GNUNET_FS_STATUS_PUBLISH_ERROR:
@@ -164,10 +168,10 @@ progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
   case GNUNET_FS_STATUS_PUBLISH_COMPLETED:
     FPRINTF (stdout, _("Publishing `%s' done.\n"),
              info->value.publish.filename);
-    s = GNUNET_FS_uri_to_string (info->value.publish.specifics.
+    suri = GNUNET_FS_uri_to_string (info->value.publish.specifics.
                                  completed.chk_uri);
-    FPRINTF (stdout, _("URI is `%s'.\n"), s);
-    GNUNET_free (s);
+    FPRINTF (stdout, _("URI is `%s'.\n"), suri);
+    GNUNET_free (suri);
     if (info->value.publish.pctx == NULL)
     {
       if (kill_task != GNUNET_SCHEDULER_NO_TASK)
@@ -177,6 +181,7 @@ progress_cb (void *cls, const struct GNUNET_FS_ProgressInfo *info)
       }
       kill_task = GNUNET_SCHEDULER_add_now (&do_stop_task, NULL);
     }
+    ret = 0;
     break;
   case GNUNET_FS_STATUS_PUBLISH_STOPPED:
     GNUNET_break (NULL == pc);
@@ -268,6 +273,12 @@ publish_inspector (void *cls, struct GNUNET_FS_FileInformation *fi,
 
   if (cls == fi)
     return GNUNET_OK;
+  if ( (disable_extractor) &&
+       (NULL != *uri) )
+  {
+    GNUNET_FS_uri_destroy (*uri);
+    *uri = NULL;
+  }
   if (NULL != topKeywords)
   {
     if (*uri != NULL)
@@ -291,12 +302,6 @@ publish_inspector (void *cls, struct GNUNET_FS_FileInformation *fi,
   }
   if (!do_disable_creation_time)
     GNUNET_CONTAINER_meta_data_add_publication_date (m);
-  if ( (disable_extractor) &&
-       (NULL != *uri) )
-  {
-    GNUNET_FS_uri_destroy (*uri);
-    *uri = NULL;
-  }
   if (extract_only)
   {
     fn = GNUNET_CONTAINER_meta_data_get_by_type (m,
@@ -355,7 +360,7 @@ uri_ksk_continuation (void *cls, const struct GNUNET_FS_Uri *ksk_uri,
     ns = GNUNET_FS_namespace_create (ctx, pseudonym);
     if (ns == NULL)
     {
-      FPRINTF (stderr, _("Failed to create namespace `%s'\n"), pseudonym);
+      FPRINTF (stderr, _("Failed to create namespace `%s' (illegal filename?)\n"), pseudonym);
       ret = 1;
     }
     else
@@ -609,7 +614,7 @@ run (void *cls, char *const *args, const char *cfgfile,
     namespace = GNUNET_FS_namespace_create (ctx, pseudonym);
     if (NULL == namespace)
     {
-      FPRINTF (stderr, _("Could not create namespace `%s'\n"), pseudonym);
+      FPRINTF (stderr, _("Failed to create namespace `%s' (illegal filename?)\n"), pseudonym);
       GNUNET_FS_stop (ctx);
       ret = 1;
       return;
@@ -732,15 +737,18 @@ main (int argc, char *const *argv)
      0, &GNUNET_GETOPT_set_one, &verbose},
     GNUNET_GETOPT_OPTION_END
   };
-  GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
-	      "GNUnet publish starts\n");
   bo.expiration_time =
       GNUNET_FS_year_to_time (GNUNET_FS_get_current_year () + 2);
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "gnunet-publish [OPTIONS] FILENAME",
-                              gettext_noop
-                              ("Publish a file or directory on GNUnet"),
-                              options, &run, NULL)) ? ret : 1;
+
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+  ret = (GNUNET_OK ==
+	 GNUNET_PROGRAM_run (argc, argv, "gnunet-publish [OPTIONS] FILENAME",
+			     gettext_noop
+			     ("Publish a file or directory on GNUnet"),
+			     options, &run, NULL)) ? ret : 1;
+  GNUNET_free ((void*) argv);
+  return ret;
 }
 
 /* end of gnunet-publish.c */

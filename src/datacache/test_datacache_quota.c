@@ -25,8 +25,7 @@
 #include "platform.h"
 #include "gnunet_util_lib.h"
 #include "gnunet_datacache_lib.h"
-
-#define VERBOSE GNUNET_NO
+#include "gnunet_testing_lib.h"
 
 #define ASSERT(x) do { if (! (x)) { printf("Error at %s:%d\n", __FILE__, __LINE__); goto FAILURE;} } while (0)
 
@@ -48,8 +47,8 @@ run (void *cls, char *const *args, const char *cfgfile,
      const struct GNUNET_CONFIGURATION_Handle *cfg)
 {
   struct GNUNET_DATACACHE_Handle *h;
-  GNUNET_HashCode k;
-  GNUNET_HashCode n;
+  struct GNUNET_HashCode k;
+  struct GNUNET_HashCode n;
   unsigned int i;
   unsigned int j;
   char buf[3200];
@@ -65,26 +64,26 @@ run (void *cls, char *const *args, const char *cfgfile,
   }
   exp = GNUNET_TIME_relative_to_absolute (GNUNET_TIME_UNIT_HOURS);
   memset (buf, 1, sizeof (buf));
-  memset (&k, 0, sizeof (GNUNET_HashCode));
+  memset (&k, 0, sizeof (struct GNUNET_HashCode));
   for (i = 0; i < 10; i++)
   {
     FPRINTF (stderr, "%s",  ".");
-    GNUNET_CRYPTO_hash (&k, sizeof (GNUNET_HashCode), &n);
+    GNUNET_CRYPTO_hash (&k, sizeof (struct GNUNET_HashCode), &n);
     for (j = i; j < sizeof (buf); j += 10)
     {
       exp.abs_value++;
       buf[j] = i;
-      ASSERT (GNUNET_OK == GNUNET_DATACACHE_put (h, &k, j, buf, 1 + i, exp));
+      ASSERT (GNUNET_OK == GNUNET_DATACACHE_put (h, &k, j, buf, 1 + i, exp, 0, NULL));
       ASSERT (0 < GNUNET_DATACACHE_get (h, &k, 1 + i, NULL, NULL));
     }
     k = n;
   }
   FPRINTF (stderr, "%s",  "\n");
-  memset (&k, 0, sizeof (GNUNET_HashCode));
+  memset (&k, 0, sizeof (struct GNUNET_HashCode));
   for (i = 0; i < 10; i++)
   {
     FPRINTF (stderr, "%s",  ".");
-    GNUNET_CRYPTO_hash (&k, sizeof (GNUNET_HashCode), &n);
+    GNUNET_CRYPTO_hash (&k, sizeof (struct GNUNET_HashCode), &n);
     if (i < 2)
       ASSERT (0 == GNUNET_DATACACHE_get (h, &k, 1 + i, NULL, NULL));
     if (i == 9)
@@ -104,16 +103,11 @@ FAILURE:
 int
 main (int argc, char *argv[])
 {
-  char *pos;
   char cfg_name[128];
-
   char *const xargv[] = {
     "test-datacache-quota",
     "-c",
     cfg_name,
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
     NULL
   };
   struct GNUNET_GETOPT_CommandLineOption options[] = {
@@ -121,29 +115,15 @@ main (int argc, char *argv[])
   };
 
   GNUNET_log_setup ("test-datacache-quota",
-#if VERBOSE
-                    "DEBUG",
-#else
                     "WARNING",
-#endif
                     NULL);
 
-  /* determine name of plugin to use */
-  plugin_name = argv[0];
-  while (NULL != (pos = strstr (plugin_name, "_")))
-    plugin_name = pos + 1;
-  if (NULL != (pos = strstr (plugin_name, ".")))
-    pos[0] = 0;
-  else
-    pos = (char *) plugin_name;
-
+  plugin_name = GNUNET_TESTING_get_testname_from_underscore (argv[0]);
   GNUNET_snprintf (cfg_name, sizeof (cfg_name), "test_datacache_data_%s.conf",
                    plugin_name);
-  if (pos != plugin_name)
-    pos[0] = '.';
   GNUNET_PROGRAM_run ((sizeof (xargv) / sizeof (char *)) - 1, xargv,
                       "test-datacache-quota", "nohelp", options, &run, NULL);
-  if (ok != 0)
+  if (0 != ok)
     FPRINTF (stderr, "Missed some testcases: %d\n", ok);
   return ok;
 }

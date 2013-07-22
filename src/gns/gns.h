@@ -17,9 +17,6 @@
       Free Software Foundation, Inc., 59 Temple Place - Suite 330,
       Boston, MA 02111-1307, USA.
  */
-
-#include "gnunet_gns_service.h"
-
 /**
  * @file gns/gns.h
  * @brief IPC messages between GNS API and GNS service
@@ -28,12 +25,23 @@
 #ifndef GNS_H
 #define GNS_H
 
-#define GNUNET_GNS_TLD "gnunet"
-#define GNUNET_GNS_TLD_ZKEY "zkey"
-#define GNUNET_GNS_DHT_MAX_UPDATE_INTERVAL 3600
+#include "gnunet_gns_service.h"
 
-#define MAX_DNS_LABEL_LENGTH 63
-#define MAX_DNS_NAME_LENGTH 253
+/**
+ * Name of the GADS TLD.
+ */
+#define GNUNET_GNS_TLD "gads"
+
+/**
+ * Name of the zone key TLD.
+ */
+#define GNUNET_GNS_TLD_ZKEY "zkey"
+
+/**
+ * TLD name used to indicate relative names.
+ */
+#define GNUNET_GNS_TLD_PLUS "+"
+
 
 GNUNET_NETWORK_STRUCT_BEGIN
 
@@ -43,7 +51,7 @@ GNUNET_NETWORK_STRUCT_BEGIN
 struct GNUNET_GNS_ClientLookupMessage
 {
   /**
-    * Header of type GNUNET_MESSAGE_TYPE_GNS_CLIENT_LOOKUP
+   * Header of type GNUNET_MESSAGE_TYPE_GNS_CLIENT_LOOKUP
    */
   struct GNUNET_MessageHeader header;
 
@@ -53,19 +61,31 @@ struct GNUNET_GNS_ClientLookupMessage
   uint32_t id GNUNET_PACKED;
 
   /**
-   * Should we look up in the default zone?
-   */
-  uint32_t use_default_zone GNUNET_PACKED;
-
-  /**
    * If use_default_zone is empty this zone is used for lookup
    */
   struct GNUNET_CRYPTO_ShortHashCode zone;
 
   /**
+   * Only check cached results
+   */
+  uint32_t only_cached GNUNET_PACKED;
+
+  /**
+   * Should we look up in the default zone?
+   */
+  uint32_t use_default_zone GNUNET_PACKED;
+
+  /**
+   * Is a shorten key attached?
+   */
+  uint32_t have_key GNUNET_PACKED;
+
+  /**
    * the type of record to look up
    */
-  enum GNUNET_GNS_RecordType type;
+  /* enum GNUNET_GNS_RecordType */ uint32_t type;
+
+  /* Followed by the key for shorten (optional) see have_key */
 
   /* Followed by the name to look up */
 };
@@ -91,10 +111,10 @@ struct GNUNET_GNS_ClientLookupResultMessage
    */  
   uint32_t rd_count;
 
-  // FIXME: what format has a GNS_Record?
   /* followed by rd_count GNUNET_NAMESTORE_RecordData structs*/
 
 };
+
 
 /**
  * Message from client to GNS service to shorten names.
@@ -102,7 +122,7 @@ struct GNUNET_GNS_ClientLookupResultMessage
 struct GNUNET_GNS_ClientShortenMessage
 {
   /**
-    * Header of type GNUNET_MESSAGE_TYPE_GNS_CLIENT_SHORTEN
+   * Header of type GNUNET_MESSAGE_TYPE_GNS_CLIENT_SHORTEN
    */
   struct GNUNET_MessageHeader header;
 
@@ -112,15 +132,25 @@ struct GNUNET_GNS_ClientShortenMessage
   uint32_t id GNUNET_PACKED;
 
   /**
-   * Should we look up in the default zone?
-   */
-  uint32_t use_default_zone GNUNET_PACKED;
-
-  /**
    * If use_default_zone is empty this zone is used for lookup
    */
   struct GNUNET_CRYPTO_ShortHashCode zone;
 
+  /**
+   * Shorten zone
+   */
+  struct GNUNET_CRYPTO_ShortHashCode shorten_zone;
+
+  /**
+   * Private zone
+   */
+  struct GNUNET_CRYPTO_ShortHashCode private_zone;
+
+  /**
+   * Should we look up in the default zone?
+   */
+  uint32_t use_default_zone GNUNET_PACKED;
+  
   /* Followed by the name to shorten up */
 };
 
@@ -131,7 +161,7 @@ struct GNUNET_GNS_ClientShortenMessage
 struct GNUNET_GNS_ClientShortenResultMessage
 {
   /**
-    * Header of type GNUNET_MESSAGE_TYPE_GNS_CLIENT_SHORTEN_RESULT
+   * Header of type GNUNET_MESSAGE_TYPE_GNS_CLIENT_SHORTEN_RESULT
    */
   struct GNUNET_MessageHeader header;
 
@@ -144,13 +174,14 @@ struct GNUNET_GNS_ClientShortenResultMessage
 
 };
 
+
 /**
  * Message from client to GNS service to lookup an authority of a name.
  */
 struct GNUNET_GNS_ClientGetAuthMessage
 {
   /**
-    * Header of type GNUNET_MESSAGE_TYPE_GNS_CLIENT_GET_AUTH
+   * Header of type GNUNET_MESSAGE_TYPE_GNS_CLIENT_GET_AUTH
    */
   struct GNUNET_MessageHeader header;
 
@@ -169,7 +200,7 @@ struct GNUNET_GNS_ClientGetAuthMessage
 struct GNUNET_GNS_ClientGetAuthResultMessage
 {
   /**
-    * Header of type GNUNET_MESSAGE_TYPE_GNS_CLIENT_GET_AUTH_RESULT
+   * Header of type GNUNET_MESSAGE_TYPE_GNS_CLIENT_GET_AUTH_RESULT
    */
   struct GNUNET_MessageHeader header;
 
@@ -181,6 +212,7 @@ struct GNUNET_GNS_ClientGetAuthResultMessage
   /* followed by the authority part of the name or '\0' for no result*/
 
 };
+
 GNUNET_NETWORK_STRUCT_END
 
 #endif

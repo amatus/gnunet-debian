@@ -10,6 +10,8 @@ endif
 
 pkgcfgdir= $(pkgdatadir)/config.d/
 
+libexecdir= $(pkglibdir)/libexec/
+
 plugindir = $(libdir)/gnunet
 
 pkgcfg_DATA = \
@@ -18,20 +20,17 @@ pkgcfg_DATA = \
 if LINUX
 HIJACKBIN = gnunet-helper-dns
 install-exec-hook:
-	$(SUDO_BINARY) chown root $(bindir)/gnunet-helper-dns || true
-	$(SUDO_BINARY) chgrp $(GNUNETDNS_GROUP) $(bindir)/gnunet-helper-dns || true
-	$(SUDO_BINARY) chmod 4750 $(bindir)/gnunet-helper-dns || true
-	$(SUDO_BINARY) chown gnunet:$(GNUNETDNS_GROUP) $(bindir)/gnunet-service-dns || true
-	$(SUDO_BINARY) chmod 2750 $(bindir)/gnunet-service-dns || true
+	$(top_srcdir)/src/dns/install-dns-helper.sh $(libexecdir) $(GNUNETDNS_GROUP) $(SUDO_BINARY) || true
 else
 install-exec-hook:
 endif
 
 lib_LTLIBRARIES = \
   libgnunetdnsparser.la \
+  libgnunetdnsstub.la \
   libgnunetdns.la
 
-bin_PROGRAMS = \
+libexec_PROGRAMS = \
   gnunet-service-dns $(HIJACKBIN)
 
 noinst_PROGRAMS = \
@@ -74,17 +73,28 @@ gnunet_dns_redirector_DEPENDENCIES = \
 gnunet_service_dns_SOURCES = \
  gnunet-service-dns.c 
 gnunet_service_dns_LDADD = \
+  $(top_builddir)/src/dns/libgnunetdnsstub.la \
   $(top_builddir)/src/tun/libgnunettun.la \
-  $(top_builddir)/src/mesh/libgnunetmesh.la \
   $(top_builddir)/src/statistics/libgnunetstatistics.la \
   $(top_builddir)/src/util/libgnunetutil.la \
   $(GN_LIBINTL)
+gnunet_service_dns_DEPENDENCIES = \
+  libgnunetdnsstub.la
 
 libgnunetdnsparser_la_SOURCES = \
- dnsparser.c 
+ dnsparser.c dnsparser.h
 libgnunetdnsparser_la_LIBADD = \
- $(top_builddir)/src/util/libgnunetutil.la $(XLIB)
+ $(top_builddir)/src/util/libgnunetutil.la $(XLIB) \
+  -lidn
 libgnunetdnsparser_la_LDFLAGS = \
+  $(GN_LIB_LDFLAGS) \
+  -version-info 1:0:1
+
+libgnunetdnsstub_la_SOURCES = \
+ dnsstub.c 
+libgnunetdnsstub_la_LIBADD = \
+ $(top_builddir)/src/util/libgnunetutil.la $(XLIB)
+libgnunetdnsstub_la_LDFLAGS = \
   $(GN_LIB_LDFLAGS) \
   -version-info 0:0:0
 

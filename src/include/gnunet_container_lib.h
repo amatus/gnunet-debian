@@ -62,7 +62,7 @@ struct GNUNET_CONTAINER_BloomFilter;
  * @return GNUNET_YES if next was updated
  *         GNUNET_NO if there are no more entries
  */
-typedef int (*GNUNET_HashCodeIterator) (void *cls, GNUNET_HashCode * next);
+typedef int (*GNUNET_HashCodeIterator) (void *cls, struct GNUNET_HashCode * next);
 
 
 /**
@@ -121,7 +121,7 @@ GNUNET_CONTAINER_bloomfilter_get_raw_data (const struct
  */
 int
 GNUNET_CONTAINER_bloomfilter_test (const struct GNUNET_CONTAINER_BloomFilter
-                                   *bf, const GNUNET_HashCode * e);
+                                   *bf, const struct GNUNET_HashCode * e);
 
 
 /**
@@ -131,7 +131,7 @@ GNUNET_CONTAINER_bloomfilter_test (const struct GNUNET_CONTAINER_BloomFilter
  */
 void
 GNUNET_CONTAINER_bloomfilter_add (struct GNUNET_CONTAINER_BloomFilter *bf,
-                                  const GNUNET_HashCode * e);
+                                  const struct GNUNET_HashCode * e);
 
 
 /**
@@ -141,7 +141,7 @@ GNUNET_CONTAINER_bloomfilter_add (struct GNUNET_CONTAINER_BloomFilter *bf,
  */
 void
 GNUNET_CONTAINER_bloomfilter_remove (struct GNUNET_CONTAINER_BloomFilter *bf,
-                                     const GNUNET_HashCode * e);
+                                     const struct GNUNET_HashCode * e);
 
 
 /**
@@ -294,7 +294,7 @@ GNUNET_CONTAINER_meta_data_test_equal (const struct GNUNET_CONTAINER_MetaData
  * @param data_mime_type mime-type of data (not of the original file);
  *        can be NULL (if mime-type is not known)
  * @param data actual meta-data found
- * @param data_len number of bytes in data
+ * @param data_size number of bytes in data
  * @return GNUNET_OK on success, GNUNET_SYSERR if this entry already exists
  *         data_mime_type and plugin_name are not considered for "exists" checks
  */
@@ -304,7 +304,7 @@ GNUNET_CONTAINER_meta_data_insert (struct GNUNET_CONTAINER_MetaData *md,
                                    enum EXTRACTOR_MetaType type,
                                    enum EXTRACTOR_MetaFormat format,
                                    const char *data_mime_type, const char *data,
-                                   size_t data_len);
+                                   size_t data_size);
 
 
 /**
@@ -326,13 +326,13 @@ GNUNET_CONTAINER_meta_data_merge (struct GNUNET_CONTAINER_MetaData *md,
  * @param type type of the item to remove
  * @param data specific value to remove, NULL to remove all
  *        entries of the given type
- * @param data_len number of bytes in data
+ * @param data_size number of bytes in data
  * @return GNUNET_OK on success, GNUNET_SYSERR if the item does not exist in md
  */
 int
 GNUNET_CONTAINER_meta_data_delete (struct GNUNET_CONTAINER_MetaData *md,
                                    enum EXTRACTOR_MetaType type,
-                                   const char *data, size_t data_len);
+                                   const char *data, size_t data_size);
 
 
 /**
@@ -534,7 +534,7 @@ enum GNUNET_CONTAINER_MultiHashMapOption
  *         GNUNET_NO if not.
  */
 typedef int (*GNUNET_CONTAINER_HashMapIterator) (void *cls,
-                                                 const GNUNET_HashCode * key,
+                                                 const struct GNUNET_HashCode * key,
                                                  void *value);
 
 
@@ -542,10 +542,20 @@ typedef int (*GNUNET_CONTAINER_HashMapIterator) (void *cls,
  * Create a multi hash map.
  *
  * @param len initial size (map will grow as needed)
+ * @param do_not_copy_keys GNUNET_NO is always safe and should be used by default;
+ *                         GNUNET_YES means that on 'put', the 'key' does not have
+ *                         to be copied as the destination of the pointer is 
+ *                         guaranteed to be life as long as the value is stored in
+ *                         the hashmap.  This can significantly reduce memory 
+ *                         consumption, but of course is also a recipie for 
+ *                         heap corruption if the assumption is not true.  Only
+ *                         use this if (1) memory use is important in this case and
+ *                         (2) you have triple-checked that the invariant holds
  * @return NULL on error
  */
 struct GNUNET_CONTAINER_MultiHashMap *
-GNUNET_CONTAINER_multihashmap_create (unsigned int len);
+GNUNET_CONTAINER_multihashmap_create (unsigned int len,
+				      int do_not_copy_keys);
 
 
 /**
@@ -571,7 +581,7 @@ GNUNET_CONTAINER_multihashmap_destroy (struct GNUNET_CONTAINER_MultiHashMap
  */
 void *
 GNUNET_CONTAINER_multihashmap_get (const struct GNUNET_CONTAINER_MultiHashMap
-                                   *map, const GNUNET_HashCode * key);
+                                   *map, const struct GNUNET_HashCode * key);
 
 
 /**
@@ -587,7 +597,7 @@ GNUNET_CONTAINER_multihashmap_get (const struct GNUNET_CONTAINER_MultiHashMap
  */
 int
 GNUNET_CONTAINER_multihashmap_remove (struct GNUNET_CONTAINER_MultiHashMap *map,
-                                      const GNUNET_HashCode * key, void *value);
+                                      const struct GNUNET_HashCode * key, void *value);
 
 /**
  * Remove all entries for the given key from the map.
@@ -599,7 +609,7 @@ GNUNET_CONTAINER_multihashmap_remove (struct GNUNET_CONTAINER_MultiHashMap *map,
  */
 int
 GNUNET_CONTAINER_multihashmap_remove_all (struct GNUNET_CONTAINER_MultiHashMap
-                                          *map, const GNUNET_HashCode * key);
+                                          *map, const struct GNUNET_HashCode * key);
 
 
 /**
@@ -614,7 +624,7 @@ GNUNET_CONTAINER_multihashmap_remove_all (struct GNUNET_CONTAINER_MultiHashMap
 int
 GNUNET_CONTAINER_multihashmap_contains (const struct
                                         GNUNET_CONTAINER_MultiHashMap *map,
-                                        const GNUNET_HashCode * key);
+                                        const struct GNUNET_HashCode * key);
 
 
 /**
@@ -630,7 +640,7 @@ GNUNET_CONTAINER_multihashmap_contains (const struct
 int
 GNUNET_CONTAINER_multihashmap_contains_value (const struct
                                               GNUNET_CONTAINER_MultiHashMap
-                                              *map, const GNUNET_HashCode * key,
+                                              *map, const struct GNUNET_HashCode * key,
                                               const void *value);
 
 
@@ -648,7 +658,7 @@ GNUNET_CONTAINER_multihashmap_contains_value (const struct
  */
 int
 GNUNET_CONTAINER_multihashmap_put (struct GNUNET_CONTAINER_MultiHashMap *map,
-                                   const GNUNET_HashCode * key, void *value,
+                                   const struct GNUNET_HashCode * key, void *value,
                                    enum GNUNET_CONTAINER_MultiHashMapOption
                                    opt);
 
@@ -692,7 +702,7 @@ GNUNET_CONTAINER_multihashmap_iterate (const struct
 int
 GNUNET_CONTAINER_multihashmap_get_multiple (const struct
                                             GNUNET_CONTAINER_MultiHashMap *map,
-                                            const GNUNET_HashCode * key,
+                                            const struct GNUNET_HashCode * key,
                                             GNUNET_CONTAINER_HashMapIterator it,
                                             void *it_cls);
 
@@ -822,6 +832,136 @@ GNUNET_CONTAINER_multihashmap_get_multiple (const struct
   (element)->prev = NULL; } while (0)
 
 
+/* ************ Multi-DLL interface, allows DLL elements to be
+   in multiple lists at the same time *********************** */
+
+/**
+ * Insert an element at the head of a MDLL. Assumes that head, tail and
+ * element are structs with prev and next fields.
+ *
+ * @param mdll suffix name for the next and prev pointers in the element
+ * @param head pointer to the head of the MDLL
+ * @param tail pointer to the tail of the MDLL
+ * @param element element to insert
+ */
+#define GNUNET_CONTAINER_MDLL_insert(mdll,head,tail,element) do {	\
+  GNUNET_assert ( ( (element)->prev_##mdll == NULL) && ((head) != (element))); \
+  GNUNET_assert ( ( (element)->next_##mdll == NULL) && ((tail) != (element))); \
+  (element)->next_##mdll = (head); \
+  (element)->prev_##mdll = NULL; \
+  if ((tail) == NULL) \
+    (tail) = element; \
+  else \
+    (head)->prev_##mdll = element; \
+  (head) = (element); } while (0)
+
+
+/**
+ * Insert an element at the tail of a MDLL. Assumes that head, tail and
+ * element are structs with prev and next fields.
+ *
+ * @param mdll suffix name for the next and prev pointers in the element
+ * @param head pointer to the head of the MDLL
+ * @param tail pointer to the tail of the MDLL
+ * @param element element to insert
+ */
+#define GNUNET_CONTAINER_MDLL_insert_tail(mdll,head,tail,element) do {	\
+  GNUNET_assert ( ( (element)->prev_##mdll == NULL) && ((head) != (element))); \
+  GNUNET_assert ( ( (element)->next_##mdll == NULL) && ((tail) != (element))); \
+  (element)->prev_##mdll = (tail); \
+  (element)->next_##mdll = NULL; \
+  if ((head) == NULL) \
+    (head) = element; \
+  else \
+    (tail)->next_##mdll = element; \
+  (tail) = (element); } while (0)
+
+
+/**
+ * Insert an element into a MDLL after the given other element.  Insert
+ * at the head if the other element is NULL.
+ *
+ * @param mdll suffix name for the next and prev pointers in the element
+ * @param head pointer to the head of the MDLL
+ * @param tail pointer to the tail of the MDLL
+ * @param other prior element, NULL for insertion at head of MDLL
+ * @param element element to insert
+ */
+#define GNUNET_CONTAINER_MDLL_insert_after(mdll,head,tail,other,element) do { \
+  GNUNET_assert ( ( (element)->prev_##mdll == NULL) && ((head) != (element))); \
+  GNUNET_assert ( ( (element)->next_##mdll == NULL) && ((tail) != (element))); \
+  (element)->prev_##mdll = (other); \
+  if (NULL == other) \
+    { \
+      (element)->next_##mdll = (head); \
+      (head) = (element); \
+    } \
+  else \
+    { \
+      (element)->next_##mdll = (other)->next_##mdll; \
+      (other)->next_##mdll = (element); \
+    } \
+  if (NULL == (element)->next_##mdll) \
+    (tail) = (element); \
+  else \
+    (element)->next->prev_##mdll = (element); } while (0)
+
+
+/**
+ * Insert an element into a MDLL before the given other element.  Insert
+ * at the tail if the other element is NULL.
+ *
+ * @param mdll suffix name for the next and prev pointers in the element
+ * @param head pointer to the head of the MDLL
+ * @param tail pointer to the tail of the MDLL
+ * @param other prior element, NULL for insertion at head of MDLL
+ * @param element element to insert
+ */
+#define GNUNET_CONTAINER_MDLL_insert_before(mdll,head,tail,other,element) do { \
+  GNUNET_assert ( ( (element)->prev_##mdll == NULL) && ((head) != (element))); \
+  GNUNET_assert ( ( (element)->next_##mdll == NULL) && ((tail) != (element))); \
+  (element)->next_##mdll = (other); \
+  if (NULL == other) \
+    { \
+      (element)->prev = (tail); \
+      (tail) = (element); \
+    } \
+  else \
+    { \
+      (element)->prev_##mdll = (other)->prev_##mdll; \
+      (other)->prev_##mdll = (element); \
+    } \
+  if (NULL == (element)->prev_##mdll) \
+    (head) = (element); \
+  else \
+    (element)->prev_##mdll->next_##mdll = (element); } while (0)
+
+
+/**
+ * Remove an element from a MDLL. Assumes
+ * that head, tail and element are structs
+ * with prev and next fields.
+ *
+ * @param mdll suffix name for the next and prev pointers in the element
+ * @param head pointer to the head of the MDLL
+ * @param tail pointer to the tail of the MDLL
+ * @param element element to remove
+ */
+#define GNUNET_CONTAINER_MDLL_remove(mdll,head,tail,element) do {	\
+  GNUNET_assert ( ( (element)->prev_##mdll != NULL) || ((head) == (element))); \
+  GNUNET_assert ( ( (element)->next_##mdll != NULL) || ((tail) == (element))); \
+  if ((element)->prev_##mdll == NULL) \
+    (head) = (element)->next_##mdll;  \
+  else \
+    (element)->prev_##mdll->next_##mdll = (element)->next_##mdll; \
+  if ((element)->next_##mdll == NULL) \
+    (tail) = (element)->prev_##mdll;  \
+  else \
+    (element)->next_##mdll->prev_##mdll = (element)->prev_##mdll; \
+  (element)->next_##mdll = NULL; \
+  (element)->prev_##mdll = NULL; } while (0)
+
+
 
 /* ******************** Heap *************** */
 
@@ -941,24 +1081,6 @@ void
 GNUNET_CONTAINER_heap_iterate (const struct GNUNET_CONTAINER_Heap *heap,
                                GNUNET_CONTAINER_HeapIterator iterator,
                                void *iterator_cls);
-
-
-/**
- * Return a *uniform* random element from the heap.  Choose a random
- * number between 0 and heap size and then walk directly to it.
- * This cost can be between 0 and n, amortized cost of logN.
- *
- * @param heap heap to choose random element from
- * @param max how many nodes from the heap to choose from
- *
- * @return data stored at the chosen random node,
- *         NULL if the heap is empty.
- *
- */
-void *
-GNUNET_CONTAINER_heap_get_random (struct GNUNET_CONTAINER_Heap *heap,
-                                  uint32_t max);
-
 
 /**
  * Perform a random walk of the tree.  The walk is biased

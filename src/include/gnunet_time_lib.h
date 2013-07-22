@@ -150,6 +150,22 @@ GNUNET_NETWORK_STRUCT_END
 #define GNUNET_TIME_UNIT_FOREVER_ABS GNUNET_TIME_absolute_get_forever_ ()
 
 
+
+/**
+ * Threshold after which exponential backoff should not increase (15 m).
+ */
+#define GNUNET_TIME_STD_EXPONENTIAL_BACKOFF_THRESHOLD GNUNET_TIME_relative_multiply (GNUNET_TIME_UNIT_MINUTES, 15)
+
+
+/**
+ * Perform our standard exponential back-off calculation, starting at 1mst
+ * and then going by a factor of 2 up unto a maximum of 1s.
+ *
+ * @param r current backoff time, initially zero
+ */
+#define GNUNET_TIME_STD_BACKOFF(r) GNUNET_TIME_relative_min (GNUNET_TIME_STD_EXPONENTIAL_BACKOFF_THRESHOLD, \
+   GNUNET_TIME_relative_multiply (GNUNET_TIME_relative_max (GNUNET_TIME_UNIT_MILLISECONDS, (r)), 2));
+
 /**
  * Return relative time of 0ms.
  */
@@ -438,18 +454,6 @@ GNUNET_TIME_absolute_hton (struct GNUNET_TIME_Absolute a);
  */
 struct GNUNET_TIME_Absolute
 GNUNET_TIME_absolute_ntoh (struct GNUNET_TIME_AbsoluteNBO a);
-
-
-/**
- * Convert a relative time to a string.
- * NOT reentrant!
- *
- * @param time the time to print
- *
- * @return string form of the time (as milliseconds)
- */
-const char *
-GNUNET_TIME_relative_to_string (struct GNUNET_TIME_Relative time);
 
 
 /**

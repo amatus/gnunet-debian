@@ -37,7 +37,7 @@
  * How much overhead do we assume per entry in the
  * datacache?
  */
-#define OVERHEAD (sizeof(GNUNET_HashCode) + 32)
+#define OVERHEAD (sizeof(struct GNUNET_HashCode) + 32)
 
 /**
  * Context for all functions in this plugin.
@@ -95,52 +95,64 @@ sq_prepare (sqlite3 * dbh, const char *zSql,    /* SQL statement, UTF-8 encoded 
  * @param data data to store
  * @param type type of the value
  * @param discard_time when to discard the value in any case
- * @return 0 on error, number of bytes used otherwise
+ * @param path_info_len number of entries in 'path_info'
+ * @param path_info array of peers that have processed the request 
+ * @return 0 if duplicate, -1 on error, number of bytes used otherwise
  */
-static size_t
-sqlite_plugin_put (void *cls, const GNUNET_HashCode * key, size_t size,
-                   const char *data, enum GNUNET_BLOCK_Type type,
-                   struct GNUNET_TIME_Absolute discard_time)
+static ssize_t
+sqlite_plugin_put (void *cls,
+		   const struct GNUNET_HashCode *key,
+		   size_t size, const char *data, 
+		   enum GNUNET_BLOCK_Type type,
+                   struct GNUNET_TIME_Absolute discard_time,
+		   unsigned int path_info_len,
+		   const struct GNUNET_PeerIdentity *path_info)
 {
   struct Plugin *plugin = cls;
   sqlite3_stmt *stmt;
   int64_t dval;
 
   LOG (GNUNET_ERROR_TYPE_DEBUG,
-       "Processing `%s' of %u bytes with key `%4s' and expiration %llums\n",
+       "Processing `%s' of %u bytes with key `%4s' and expiration %s\n",
        "PUT", (unsigned int) size, GNUNET_h2s (key),
-       (unsigned long long)
-       GNUNET_TIME_absolute_get_remaining (discard_time).rel_value);
+       GNUNET_STRINGS_relative_time_to_string (GNUNET_TIME_absolute_get_remaining (discard_time), GNUNET_YES));
   dval = (int64_t) discard_time.abs_value;
   if (dval < 0)
     dval = INT64_MAX;
   if (sq_prepare
       (plugin->dbh,
-       "INSERT INTO ds090 (type, expire, key, value) VALUES (?, ?, ?, ?)",
+       "INSERT INTO ds090 (type, expire, key, value, path) VALUES (?, ?, ?, ?, ?)",
        &stmt) != SQLITE_OK)
   {
     LOG_SQLITE (plugin->dbh, GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
                 "sq_prepare");
-    return 0;
+    return -1;
   }
   if ((SQLITE_OK != sqlite3_bind_int (stmt, 1, type)) ||
       (SQLITE_OK != sqlite3_bind_int64 (stmt, 2, dval)) ||
       (SQLITE_OK !=
-       sqlite3_bind_blob (stmt, 3, key, sizeof (GNUNET_HashCode),
+       sqlite3_bind_blob (stmt, 3,
+			  key, sizeof (struct GNUNET_HashCode),
                           SQLITE_TRANSIENT)) ||
-      (SQLITE_OK != sqlite3_bind_blob (stmt, 4, data, size, SQLITE_TRANSIENT)))
+      (SQLITE_OK != sqlite3_bind_blob (stmt, 4,
+				       data, size, 
+				       SQLITE_TRANSIENT)) ||
+      (SQLITE_OK != sqlite3_bind_blob (stmt, 5, 
+				       path_info, 
+				       path_info_len * sizeof (struct GNUNET_PeerIdentity), 
+				       SQLITE_TRANSIENT)))
   {
     LOG_SQLITE (plugin->dbh, GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
                 "sqlite3_bind_xxx");
     sqlite3_finalize (stmt);
-    return 0;
+    return -1;
   }
   if (SQLITE_DONE != sqlite3_step (stmt))
   {
     LOG_SQLITE (plugin->dbh, GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
                 "sqlite3_step");
     sqlite3_finalize (stmt);
-    return 0;
+    return -1;
   }
   if (SQLITE_OK != sqlite3_finalize (stmt))
     LOG_SQLITE (plugin->dbh, GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
@@ -161,7 +173,7 @@ sqlite_plugin_put (void *cls, const GNUNET_HashCode * key, size_t size,
  * @return the number of results found
  */
 static unsigned int
-sqlite_plugin_get (void *cls, const GNUNET_HashCode * key,
+sqlite_plugin_get (void *cls, const struct GNUNET_HashCode * key,
                    enum GNUNET_BLOCK_Type type, GNUNET_DATACACHE_Iterator iter,
                    void *iter_cls)
 {
@@ -174,8 +186,10 @@ sqlite_plugin_get (void *cls, const GNUNET_HashCode * key,
   unsigned int cnt;
   unsigned int off;
   unsigned int total;
+  unsigned int psize;
   char scratch[256];
   int64_t ntime;
+  const struct GNUNET_PeerIdentity *path;
 
   now = GNUNET_TIME_absolute_get ();
   LOG (GNUNET_ERROR_TYPE_DEBUG, "Processing `%s' for key `%4s'\n", "GET",
@@ -192,7 +206,7 @@ sqlite_plugin_get (void *cls, const GNUNET_HashCode * key,
   ntime = (int64_t) now.abs_value;
   GNUNET_assert (ntime >= 0);
   if ((SQLITE_OK !=
-       sqlite3_bind_blob (stmt, 1, key, sizeof (GNUNET_HashCode),
+       sqlite3_bind_blob (stmt, 1, key, sizeof (struct GNUNET_HashCode),
                           SQLITE_TRANSIENT)) ||
       (SQLITE_OK != sqlite3_bind_int (stmt, 2, type)) ||
       (SQLITE_OK != sqlite3_bind_int64 (stmt, 3, now.abs_value)))
@@ -230,7 +244,7 @@ sqlite_plugin_get (void *cls, const GNUNET_HashCode * key,
   {
     off = (off + 1) % total;
     GNUNET_snprintf (scratch, sizeof (scratch),
-                     "SELECT value,expire FROM ds090 WHERE key=? AND type=? AND expire >= ? LIMIT 1 OFFSET %u",
+                     "SELECT value,expire,path FROM ds090 WHERE key=? AND type=? AND expire >= ? LIMIT 1 OFFSET %u",
                      off);
     if (sq_prepare (plugin->dbh, scratch, &stmt) != SQLITE_OK)
     {
@@ -239,7 +253,7 @@ sqlite_plugin_get (void *cls, const GNUNET_HashCode * key,
       return cnt;
     }
     if ((SQLITE_OK !=
-         sqlite3_bind_blob (stmt, 1, key, sizeof (GNUNET_HashCode),
+         sqlite3_bind_blob (stmt, 1, key, sizeof (struct GNUNET_HashCode),
                             SQLITE_TRANSIENT)) ||
         (SQLITE_OK != sqlite3_bind_int (stmt, 2, type)) ||
         (SQLITE_OK != sqlite3_bind_int64 (stmt, 3, now.abs_value)))
@@ -254,6 +268,17 @@ sqlite_plugin_get (void *cls, const GNUNET_HashCode * key,
     size = sqlite3_column_bytes (stmt, 0);
     dat = sqlite3_column_blob (stmt, 0);
     exp.abs_value = sqlite3_column_int64 (stmt, 1);
+    psize = sqlite3_column_bytes (stmt, 2);
+    if (0 != psize % sizeof (struct GNUNET_PeerIdentity))
+    {
+      GNUNET_break (0);
+      psize = 0;
+    }
+    psize /= sizeof (struct GNUNET_PeerIdentity);
+    if (0 != psize)
+      path = sqlite3_column_blob (stmt, 2);
+    else
+      path = NULL;
     ntime = (int64_t) exp.abs_value;
     if (ntime == INT64_MAX)
       exp = GNUNET_TIME_UNIT_FOREVER_ABS;
@@ -261,7 +286,7 @@ sqlite_plugin_get (void *cls, const GNUNET_HashCode * key,
     LOG (GNUNET_ERROR_TYPE_DEBUG,
          "Found %u-byte result when processing `%s' for key `%4s'\n",
          (unsigned int) size, "GET", GNUNET_h2s (key));
-    if (GNUNET_OK != iter (iter_cls, exp, key, size, dat, type))
+    if (GNUNET_OK != iter (iter_cls, key, size, dat, type, exp, psize, path))
     {
       sqlite3_finalize (stmt);
       break;
@@ -287,7 +312,7 @@ sqlite_plugin_del (void *cls)
   unsigned int dsize;
   sqlite3_stmt *stmt;
   sqlite3_stmt *dstmt;
-  GNUNET_HashCode hc;
+  struct GNUNET_HashCode hc;
 
   LOG (GNUNET_ERROR_TYPE_DEBUG, "Processing `%s'\n", "DEL");
   stmt = NULL;
@@ -311,8 +336,8 @@ sqlite_plugin_del (void *cls)
     return GNUNET_SYSERR;
   }
   rowid = sqlite3_column_int64 (stmt, 0);
-  GNUNET_assert (sqlite3_column_bytes (stmt, 1) == sizeof (GNUNET_HashCode));
-  memcpy (&hc, sqlite3_column_blob (stmt, 1), sizeof (GNUNET_HashCode));
+  GNUNET_assert (sqlite3_column_bytes (stmt, 1) == sizeof (struct GNUNET_HashCode));
+  memcpy (&hc, sqlite3_column_blob (stmt, 1), sizeof (struct GNUNET_HashCode));
   dsize = sqlite3_column_bytes (stmt, 2);
   if (SQLITE_OK != sqlite3_finalize (stmt))
     LOG_SQLITE (plugin->dbh, GNUNET_ERROR_TYPE_ERROR | GNUNET_ERROR_TYPE_BULK,
@@ -365,25 +390,33 @@ libgnunet_plugin_datacache_sqlite_init (void *cls)
   sqlite3 *dbh;
   char *emsg;
 
-  fn = GNUNET_DISK_mktemp ("gnunet-datacache");
-  if (fn == NULL)
+  if (GNUNET_YES ==
+      GNUNET_CONFIGURATION_get_value_yesno (env->cfg,
+					    "datacache-sqlite",
+					    "IN_MEMORY"))
   {
-    GNUNET_break (0);
-    return NULL;
+    if (SQLITE_OK != sqlite3_open (":memory:", &dbh))
+      return NULL;
+    fn_utf8 = NULL;
   }
-#ifdef ENABLE_NLS
-  fn_utf8 = GNUNET_STRINGS_to_utf8 (fn, strlen (fn), nl_langinfo (CODESET));
-#else
-  /* good luck */
-  fn_utf8 = GNUNET_STRINGS_to_utf8 (fn, strlen (fn), "UTF-8");
-#endif
-  if (SQLITE_OK != sqlite3_open (fn_utf8, &dbh))
+  else
   {
+    fn = GNUNET_DISK_mktemp ("gnunet-datacache");
+    if (fn == NULL)
+      {
+	GNUNET_break (0);
+	return NULL;
+      }
+    /* fn should be UTF-8-encoded. If it isn't, it's a bug. */
+    fn_utf8 = GNUNET_strdup (fn);
+    if (SQLITE_OK != sqlite3_open (fn_utf8, &dbh))
+    {
+      GNUNET_free (fn);
+      GNUNET_free (fn_utf8);
+      return NULL;
+    }
     GNUNET_free (fn);
-    GNUNET_free (fn_utf8);
-    return NULL;
   }
-  GNUNET_free (fn);
 
   SQLITE3_EXEC (dbh, "PRAGMA temp_store=MEMORY");
   SQLITE3_EXEC (dbh, "PRAGMA locking_mode=EXCLUSIVE");
@@ -391,11 +424,18 @@ libgnunet_plugin_datacache_sqlite_init (void *cls)
   SQLITE3_EXEC (dbh, "PRAGMA synchronous=OFF");
   SQLITE3_EXEC (dbh, "PRAGMA count_changes=OFF");
   SQLITE3_EXEC (dbh, "PRAGMA page_size=4092");
+  if (GNUNET_YES ==
+      GNUNET_CONFIGURATION_get_value_yesno (env->cfg,
+					    "datacache-sqlite",
+					    "IN_MEMORY"))
+    SQLITE3_EXEC (dbh, "PRAGMA sqlite_temp_store=3");
+
   SQLITE3_EXEC (dbh,
                 "CREATE TABLE ds090 (" "  type INTEGER NOT NULL DEFAULT 0,"
                 "  expire INTEGER NOT NULL DEFAULT 0,"
                 "  key BLOB NOT NULL DEFAULT '',"
-                "  value BLOB NOT NULL DEFAULT '')");
+                "  value BLOB NOT NULL DEFAULT '',"
+		"  path BLOB DEFAULT '')");
   SQLITE3_EXEC (dbh, "CREATE INDEX idx_hashidx ON ds090 (key,type,expire)");
   SQLITE3_EXEC (dbh, "CREATE INDEX idx_expire ON ds090 (expire)");
   plugin = GNUNET_malloc (sizeof (struct Plugin));
@@ -430,9 +470,10 @@ libgnunet_plugin_datacache_sqlite_done (void *cls)
 #endif
 
 #if !WINDOWS || defined(__CYGWIN__)
-  if (0 != UNLINK (plugin->fn))
+  if ( (NULL != plugin->fn) &&
+       (0 != UNLINK (plugin->fn)) )
     LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "unlink", plugin->fn);
-  GNUNET_free (plugin->fn);
+  GNUNET_free_non_null (plugin->fn);
 #endif
   result = sqlite3_close (plugin->dbh);
 #if SQLITE_VERSION_NUMBER >= 3007000
@@ -458,9 +499,10 @@ libgnunet_plugin_datacache_sqlite_done (void *cls)
     LOG_SQLITE (plugin->dbh, GNUNET_ERROR_TYPE_ERROR, "sqlite3_close");
 
 #if WINDOWS && !defined(__CYGWIN__)
-  if (0 != UNLINK (plugin->fn))
+  if ( (NULL != plugin->fn) &&
+       (0 != UNLINK (plugin->fn)) )
     LOG_STRERROR_FILE (GNUNET_ERROR_TYPE_WARNING, "unlink", plugin->fn);
-  GNUNET_free (plugin->fn);
+  GNUNET_free_non_null (plugin->fn);
 #endif
   GNUNET_free (plugin);
   GNUNET_free (api);

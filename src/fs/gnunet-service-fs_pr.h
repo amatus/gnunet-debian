@@ -84,28 +84,29 @@ struct GSF_PendingRequestData
   /**
    * Primary query hash for this request.
    */
-  GNUNET_HashCode query;
+  struct GNUNET_HashCode query;
 
   /**
    * Namespace to query, only set if the type is SBLOCK.
+   * Allocated after struct only if needed. Do not free!
    */
-  GNUNET_HashCode namespace;
+  const struct GNUNET_HashCode *namespace;
 
   /**
-   * Identity of a peer hosting the content, only set if
-   * 'has_target' is GNUNET_YES.
+   * Identity of a peer hosting the content, otherwise NULl.
+   * Allocated after struct only if needed. Do not free!
    */
-  struct GNUNET_PeerIdentity target;
-
-  /**
-   * Fields for the plan module to track a DLL with the request.
-   */
-  struct GSF_RequestPlanReference *rpr_head;
+  const struct GNUNET_PeerIdentity *target;
 
   /**
    * Fields for the plan module to track a DLL with the request.
    */
-  struct GSF_RequestPlanReference *rpr_tail;
+  struct GSF_PendingRequestPlanBijection *pr_head;
+
+  /**
+   * Fields for the plan module to track a DLL with the request.
+   */
+  struct GSF_PendingRequestPlanBijection *pr_tail;
 
   /**
    * Current TTL for the request.
@@ -133,6 +134,22 @@ struct GSF_PendingRequestData
   uint32_t original_priority;
 
   /**
+   * Counter for how often this request has been transmitted (estimate,
+   * because we might have the same request pending for multiple clients,
+   * and of course because a transmission may have failed at a lower
+   * layer).
+   */
+  uint32_t num_transmissions;
+
+  /**
+   * How much respect did we (in total) offer for this request so far (estimate,
+   * because we might have the same request pending for multiple clients,
+   * and of course because a transmission may have failed at a lower
+   * layer).
+   */
+  uint32_t respect_offered;
+
+  /**
    * Options for the request.
    */
   enum GSF_PendingRequestOptions options;
@@ -146,11 +163,6 @@ struct GSF_PendingRequestData
    * Number of results we have found for this request so far.
    */
   unsigned int results_found;
-
-  /**
-   * Is the 'target' value set to a valid peer identity?
-   */
-  int has_target;
 
   /**
    * Has this request been started yet (local/p2p operations)?  Or are
@@ -220,15 +232,15 @@ typedef void (*GSF_PendingRequestReplyHandler) (void *cls,
 struct GSF_PendingRequest *
 GSF_pending_request_create_ (enum GSF_PendingRequestOptions options,
                              enum GNUNET_BLOCK_Type type,
-                             const GNUNET_HashCode * query,
-                             const GNUNET_HashCode * namespace,
+                             const struct GNUNET_HashCode * query,
+                             const struct GNUNET_HashCode * namespace,
                              const struct GNUNET_PeerIdentity *target,
                              const char *bf_data, size_t bf_size,
                              uint32_t mingle, uint32_t anonymity_level,
                              uint32_t priority, int32_t ttl,
                              GNUNET_PEER_Id sender_pid,
                              GNUNET_PEER_Id origin_pid,
-                             const GNUNET_HashCode * replies_seen,
+                             const struct GNUNET_HashCode * replies_seen,
                              unsigned int replies_seen_count,
                              GSF_PendingRequestReplyHandler rh, void *rh_cls);
 
@@ -243,7 +255,7 @@ GSF_pending_request_create_ (enum GSF_PendingRequestOptions options,
  */
 void
 GSF_pending_request_update_ (struct GSF_PendingRequest *pr,
-                             const GNUNET_HashCode * replies_seen,
+                             const struct GNUNET_HashCode * replies_seen,
                              unsigned int replies_seen_count);
 
 
@@ -305,7 +317,7 @@ GSF_pending_request_cancel_ (struct GSF_PendingRequest *pr, int full_cleanup);
  * @return GNUNET_YES to continue to iterate
  */
 typedef int (*GSF_PendingRequestIterator) (void *cls,
-                                           const GNUNET_HashCode * key,
+                                           const struct GNUNET_HashCode * key,
                                            struct GSF_PendingRequest * pr);
 
 
@@ -344,6 +356,15 @@ GSF_handle_p2p_content_ (struct GSF_ConnectedPeer *cp,
  */
 void
 GSF_dht_lookup_ (struct GSF_PendingRequest *pr);
+
+
+/**
+ * Consider downloading via stream (if possible)
+ *
+ * @param pr the pending request to process
+ */
+void
+GSF_stream_lookup_ (struct GSF_PendingRequest *pr);
 
 
 /**

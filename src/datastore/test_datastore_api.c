@@ -30,10 +30,8 @@
 #include "gnunet_util_lib.h"
 #include "gnunet_protocols.h"
 #include "gnunet_datastore_service.h"
+#include "gnunet_testing_lib.h"
 
-#define VERBOSE GNUNET_NO
-
-#define START_DATASTORE GNUNET_YES
 
 /**
  * How long until we give up on transmitting the message?
@@ -121,7 +119,7 @@ enum RunPhase
 
 struct CpsRunContext
 {
-  GNUNET_HashCode key;
+  struct GNUNET_HashCode key;
   int i;
   int rid;
   const struct GNUNET_CONFIGURATION_Handle *cfg;
@@ -173,7 +171,7 @@ get_reserved (void *cls, int success, struct GNUNET_TIME_Absolute min_expiration
 
 
 static void
-check_value (void *cls, const GNUNET_HashCode * key, size_t size,
+check_value (void *cls, const struct GNUNET_HashCode * key, size_t size,
              const void *data, enum GNUNET_BLOCK_Type type, uint32_t priority,
              uint32_t anonymity, struct GNUNET_TIME_Absolute expiration,
              uint64_t uid)
@@ -219,7 +217,7 @@ check_value (void *cls, const GNUNET_HashCode * key, size_t size,
 
 
 static void
-delete_value (void *cls, const GNUNET_HashCode * key, size_t size,
+delete_value (void *cls, const struct GNUNET_HashCode * key, size_t size,
               const void *data, enum GNUNET_BLOCK_Type type, uint32_t priority,
               uint32_t anonymity, struct GNUNET_TIME_Absolute expiration,
               uint64_t uid)
@@ -239,7 +237,7 @@ delete_value (void *cls, const GNUNET_HashCode * key, size_t size,
 
 
 static void
-check_nothing (void *cls, const GNUNET_HashCode * key, size_t size,
+check_nothing (void *cls, const struct GNUNET_HashCode * key, size_t size,
                const void *data, enum GNUNET_BLOCK_Type type, uint32_t priority,
                uint32_t anonymity, struct GNUNET_TIME_Absolute expiration,
                uint64_t uid)
@@ -255,7 +253,7 @@ check_nothing (void *cls, const GNUNET_HashCode * key, size_t size,
 
 
 static void
-check_multiple (void *cls, const GNUNET_HashCode * key, size_t size,
+check_multiple (void *cls, const struct GNUNET_HashCode * key, size_t size,
                 const void *data, enum GNUNET_BLOCK_Type type,
                 uint32_t priority, uint32_t anonymity,
                 struct GNUNET_TIME_Absolute expiration, uint64_t uid)
@@ -287,7 +285,7 @@ check_multiple (void *cls, const GNUNET_HashCode * key, size_t size,
 
 
 static void
-check_update (void *cls, const GNUNET_HashCode * key, size_t size,
+check_update (void *cls, const struct GNUNET_HashCode * key, size_t size,
               const void *data, enum GNUNET_BLOCK_Type type, uint32_t priority,
               uint32_t anonymity, struct GNUNET_TIME_Absolute expiration,
               uint64_t uid)
@@ -314,16 +312,12 @@ run_continuation (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
   struct CpsRunContext *crc = cls;
 
   ok = (int) crc->phase;
-#if VERBOSE
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Test in phase %u\n", crc->phase);
-#endif
   switch (crc->phase)
   {
   case RP_PUT:
-#if VERBOSE
     GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Executing `%s' number %u\n", "PUT",
                 crc->i);
-#endif
     GNUNET_CRYPTO_hash (&crc->i, sizeof (int), &crc->key);
     GNUNET_DATASTORE_put (datastore, 0, &crc->key, get_size (crc->i),
                           get_data (crc->i), get_type (crc->i),
@@ -336,10 +330,8 @@ run_continuation (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
     break;
   case RP_GET:
     crc->i--;
-#if VERBOSE
     GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Executing `%s' number %u\n", "GET",
                 crc->i);
-#endif
     GNUNET_CRYPTO_hash (&crc->i, sizeof (int), &crc->key);
     GNUNET_DATASTORE_get_key (datastore, crc->offset, &crc->key,
                               get_type (crc->i), 1, 1, TIMEOUT, &check_value,
@@ -347,10 +339,8 @@ run_continuation (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
     break;
   case RP_DEL:
     crc->i--;
-#if VERBOSE
     GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Executing `%s' number %u\n", "DEL",
                 crc->i);
-#endif
     crc->data = NULL;
     GNUNET_CRYPTO_hash (&crc->i, sizeof (int), &crc->key);
     GNUNET_assert (NULL !=
@@ -359,10 +349,8 @@ run_continuation (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
                                              &delete_value, crc));
     break;
   case RP_DO_DEL:
-#if VERBOSE
     GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Executing `%s' number %u\n", "DO_DEL",
                 crc->i);
-#endif
     if (crc->i == 0)
     {
       crc->i = ITERATIONS;
@@ -379,10 +367,8 @@ run_continuation (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
     break;
   case RP_DELVALIDATE:
     crc->i--;
-#if VERBOSE
     GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Executing `%s' number %u\n",
                 "DEL-VALIDATE", crc->i);
-#endif
     GNUNET_CRYPTO_hash (&crc->i, sizeof (int), &crc->key);
     GNUNET_assert (NULL !=
                    GNUNET_DATASTORE_get_key (datastore, crc->offset, &crc->key,
@@ -433,9 +419,7 @@ run_continuation (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
                                              &check_update, crc));
     break;
   case RP_DONE:
-#if VERBOSE
     GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Finished, disconnecting\n");
-#endif
     GNUNET_DATASTORE_disconnect (datastore, GNUNET_YES);
     GNUNET_free (crc);
     ok = 0;
@@ -479,11 +463,12 @@ run_tests (void *cls, int32_t success, struct GNUNET_TIME_Absolute min_expiratio
 
 
 static void
-run (void *cls, char *const *args, const char *cfgfile,
-     const struct GNUNET_CONFIGURATION_Handle *cfg)
+run (void *cls, 
+     const struct GNUNET_CONFIGURATION_Handle *cfg,
+     struct GNUNET_TESTING_Peer *peer)
 {
   struct CpsRunContext *crc;
-  static GNUNET_HashCode zkey;
+  static struct GNUNET_HashCode zkey;
 
   crc = GNUNET_malloc (sizeof (struct CpsRunContext));
   crc->cfg = cfg;
@@ -504,88 +489,21 @@ run (void *cls, char *const *args, const char *cfgfile,
 }
 
 
-static int
-check ()
-{
-  char cfg_name[128];
-
-#if START_DATASTORE
-  struct GNUNET_OS_Process *proc;
-#endif
-  char *const argv[] = {
-    "test-datastore-api",
-    "-c",
-    cfg_name,
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
-    NULL
-  };
-  struct GNUNET_GETOPT_CommandLineOption options[] = {
-    GNUNET_GETOPT_OPTION_END
-  };
-  GNUNET_snprintf (cfg_name, sizeof (cfg_name),
-                   "test_datastore_api_data_%s.conf", plugin_name);
-#if START_DATASTORE
-  proc =
-    GNUNET_OS_start_process (GNUNET_YES, NULL, NULL, "gnunet-service-arm",
-                               "gnunet-service-arm",
-#if VERBOSE
-                               "-L", "DEBUG",
-#endif
-                               "-c", cfg_name, NULL);
-#endif
-  GNUNET_assert (NULL != proc);
-  GNUNET_PROGRAM_run ((sizeof (argv) / sizeof (char *)) - 1, argv,
-                      "test-datastore-api", "nohelp", options, &run, NULL);
-#if START_DATASTORE
-  sleep (1);                    /* give datastore chance to receive 'DROP' request */
-  if (0 != GNUNET_OS_process_kill (proc, SIGTERM))
-  {
-    GNUNET_log_strerror (GNUNET_ERROR_TYPE_WARNING, "kill");
-    ok = 1;
-  }
-  GNUNET_OS_process_wait (proc);
-  GNUNET_OS_process_destroy (proc);
-  proc = NULL;
-#endif
-  if (ok != 0)
-    FPRINTF (stderr, "Missed some testcases: %u\n", ok);
-  return ok;
-}
-
 int
 main (int argc, char *argv[])
 {
-  int ret;
-  char *pos;
-  char dir_name[128];
+  char cfg_name[128];
 
-  sleep (1);
-  /* determine name of plugin to use */
-  plugin_name = argv[0];
-  while (NULL != (pos = strstr (plugin_name, "_")))
-    plugin_name = pos + 1;
-  if (NULL != (pos = strstr (plugin_name, ".")))
-    pos[0] = 0;
-  else
-    pos = (char *) plugin_name;
-
-  GNUNET_snprintf (dir_name, sizeof (dir_name), "/tmp/test-gnunet-datastore-%s",
-                   plugin_name);
-  GNUNET_DISK_directory_remove (dir_name);
-  GNUNET_log_setup ("test-datastore-api",
-#if VERBOSE
-                    "DEBUG",
-#else
-                    "WARNING",
-#endif
-                    NULL);
-  ret = check ();
-  if (pos != plugin_name)
-    pos[0] = '.';
-  GNUNET_DISK_directory_remove (dir_name);
-  return ret;
+  plugin_name = GNUNET_TESTING_get_testname_from_underscore (argv[0]);
+  GNUNET_snprintf (cfg_name, sizeof (cfg_name),
+                   "test_datastore_api_data_%s.conf", plugin_name);
+  if (0 !=
+      GNUNET_TESTING_peer_run ("test-gnunet-datastore",
+			       cfg_name,
+			       &run,
+			       NULL))
+    return 1;
+  return ok;
 }
 
 /* end of test_datastore_api.c */

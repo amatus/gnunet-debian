@@ -99,7 +99,7 @@ void
 GDS_HELLO_init ()
 {
   pnc = GNUNET_PEERINFO_notify (GDS_cfg, &process_hello, NULL);
-  peer_to_hello = GNUNET_CONTAINER_multihashmap_create (256);
+  peer_to_hello = GNUNET_CONTAINER_multihashmap_create (256, GNUNET_NO);
 }
 
 
@@ -107,7 +107,7 @@ GDS_HELLO_init ()
  * Free memory occopied by the HELLO.
  */
 static int
-free_hello (void *cls, const GNUNET_HashCode * key, void *hello)
+free_hello (void *cls, const struct GNUNET_HashCode * key, void *hello)
 {
   GNUNET_free (hello);
   return GNUNET_OK;

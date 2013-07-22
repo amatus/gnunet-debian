@@ -27,12 +27,11 @@
 
 #include "platform.h"
 #include "gnunet_common.h"
-#include "gnunet_getopt_lib.h"
 #include "gnunet_hello_lib.h"
-#include "gnunet_os_lib.h"
 #include "gnunet_program_lib.h"
 #include "gnunet_container_lib.h"
 #include "gnunet_transport_service.h"
+#include "gnunet_testing_lib.h"
 
 
 #define GNUNET_TRANSPORT_TESTING_ConnectRequest void *
@@ -59,7 +58,9 @@ typedef void (*GNUNET_TRANSPORT_TESTING_connect_cb) (struct PeerContext * p1,
                                                      void *cls);
 
 
-
+/**
+ * Definition for a transport testing handle
+ */
 struct GNUNET_TRANSPORT_TESTING_handle;
 
 /**
@@ -67,37 +68,84 @@ struct GNUNET_TRANSPORT_TESTING_handle;
  */
 struct PeerContext
 {
+  /**
+   * Next element in the DLL
+   */
   struct PeerContext *next;
+
+  /**
+   * Previous element in the DLL
+   */
   struct PeerContext *prev;
 
+  /**
+   * Transport testing handle this peer belongs to
+   */
   struct GNUNET_TRANSPORT_TESTING_handle *tth;
 
+  /**
+   * Peer's configuration
+   */
   struct GNUNET_CONFIGURATION_Handle *cfg;
 
+  /**
+   * Peer's transport service handle
+   */
   struct GNUNET_TRANSPORT_Handle *th;
 
+  /**
+   * Peer's transport get hello handle to retrieve peer's HELLO message
+   */
   struct GNUNET_TRANSPORT_GetHelloHandle *ghh;
 
+  /**
+   * Peer's testing handle
+   */
+  struct GNUNET_TESTING_Peer *peer;
+
+  /**
+   * Peer identity
+   */
   struct GNUNET_PeerIdentity id;
 
+  /**
+   * Handle for the peer's ARM process
+   */
   struct GNUNET_OS_Process *arm_proc;
 
+  /**
+   * Receive callback
+   */
   GNUNET_TRANSPORT_ReceiveCallback rec;
 
+  /**
+   * Notify connect callback
+   */
   GNUNET_TRANSPORT_NotifyConnect nc;
 
+  /**
+   * Notify disconnect callback
+   */
   GNUNET_TRANSPORT_NotifyDisconnect nd;
 
+  /**
+   * Startup completed callback
+   */
   GNUNET_TRANSPORT_TESTING_start_cb start_cb;
 
+  /**
+   * Peers HELLO Message
+   */
   struct GNUNET_HELLO_Message *hello;
 
+  /**
+   * Closure for the callbacks
+   */
   void *cb_cls;
 
-  char *servicehome;
-
-  char *hostkeyfile;
-
+  /**
+   * An unique number to identify the peer
+   */
   unsigned int no;
 };
 
@@ -119,14 +167,29 @@ struct ConnectingContext
 
 struct GNUNET_TRANSPORT_TESTING_handle
 {
+  /**
+   * Testing library system handle
+   */
+  struct GNUNET_TESTING_System *tl_system;
+
+  /**
+   * head DLL of connect contexts
+   */
   struct ConnectingContext *cc_head;
+
+  /**
+   * head DLL of connect contexts
+   */
   struct ConnectingContext *cc_tail;
 
-  char *hostkey_data;
-  int hostkeys_total;
-  int hostkeys_last;
-
+  /**
+   * head DLL of peers
+   */
   struct PeerContext *p_head;
+
+  /**
+   * tail DLL of peers
+   */
   struct PeerContext *p_tail;
 };
 

@@ -9,7 +9,7 @@
 
      GNUnet is distributed in the hope that it will be useful, but
      WITHOUT ANY WARRANTY; without even the implied warranty of
-     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPROSE.  See the GNU
      General Public License for more details.
 
      You should have received a copy of the GNU General Public License
@@ -78,6 +78,7 @@ GNUNET_SPEEDUP_start_ (const struct GNUNET_CONFIGURATION_Handle *cfg);
 int
 GNUNET_SPEEDUP_stop_ (void);
 
+
 /**
  * Initial task called by the scheduler for each
  * program.  Runs the program-specific main task.
@@ -86,8 +87,10 @@ static void
 program_main (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
 {
   struct CommandContext *cc = cls;
-  GNUNET_SPEEDUP_start_(cc->cfg);
 
+  if (0 != (GNUNET_SCHEDULER_REASON_SHUTDOWN & tc->reason))
+    return;
+  GNUNET_SPEEDUP_start_(cc->cfg);
   GNUNET_RESOLVER_connect (cc->cfg);
   cc->task (cc->task_cls, cc->args, cc->cfgfile, cc->cfg);
 }
@@ -158,7 +161,7 @@ GNUNET_PROGRAM_run2 (int argc, char *const *argv, const char *binaryName,
     GNUNET_GETOPT_OPTION_HELP (binaryHelp),
     GNUNET_GETOPT_OPTION_LOGLEVEL (&loglev),
     GNUNET_GETOPT_OPTION_LOGFILE (&logfile),
-    GNUNET_GETOPT_OPTION_VERSION (PACKAGE_VERSION)
+    GNUNET_GETOPT_OPTION_VERSION (PACKAGE_VERSION " " VCS_VERSION)
   };
   struct GNUNET_GETOPT_CommandLineOption *allopts;
   const char *gargs;
@@ -228,9 +231,8 @@ GNUNET_PROGRAM_run2 (int argc, char *const *argv, const char *binaryName,
   lpfx = GNUNET_strdup (binaryName);
   if (NULL != (spc = strstr (lpfx, " ")))
     *spc = '\0';
-  if ((-1 ==
-       (ret =
-        GNUNET_GETOPT_run (binaryName, allopts, (unsigned int) argc, argv))) ||
+  ret = GNUNET_GETOPT_run (binaryName, allopts, (unsigned int) argc, argv);
+  if ((GNUNET_OK > ret) ||
       (GNUNET_OK != GNUNET_log_setup (lpfx, loglev, logfile)))
   {
     GNUNET_CONFIGURATION_destroy (cfg);
@@ -239,9 +241,19 @@ GNUNET_PROGRAM_run2 (int argc, char *const *argv, const char *binaryName,
     GNUNET_free_non_null (logfile);
     GNUNET_free (allopts);
     GNUNET_free (lpfx);
-    return GNUNET_SYSERR;
+    return (ret == GNUNET_SYSERR) ? GNUNET_SYSERR : GNUNET_OK;
   }
-  (void) GNUNET_CONFIGURATION_load (cfg, cc.cfgfile);
+  if (GNUNET_YES ==
+      GNUNET_DISK_file_test (cc.cfgfile))
+    (void) GNUNET_CONFIGURATION_load (cfg, cc.cfgfile);
+  else
+  {
+    (void) GNUNET_CONFIGURATION_load (cfg, NULL);
+    if (0 != strcmp (cc.cfgfile, GNUNET_DEFAULT_USER_CONFIG_FILE))
+      GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
+		  _("Could not access configuration file `%s'\n"),
+		  cc.cfgfile);
+  }
   GNUNET_free (allopts);
   GNUNET_free (lpfx);
   if (GNUNET_OK ==

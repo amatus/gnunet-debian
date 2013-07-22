@@ -7,30 +7,27 @@ if MINGW
   NATCLIENT = gnunet-helper-nat-client-windows.c
 endif
 
+libexecdir= $(pkglibdir)/libexec/
+
 pkgcfgdir= $(pkgdatadir)/config.d/
 
 dist_pkgcfg_DATA = \
   nat.conf
-
-
-if ENABLE_TEST_RUN
- nattest = $(bindir)/gnunet-nat-server
-endif
-
 
 if LINUX
 NATBIN = gnunet-helper-nat-server gnunet-helper-nat-client
 NATSERVER = gnunet-helper-nat-server.c
 NATCLIENT = gnunet-helper-nat-client.c
 install-exec-hook:
-	$(SUDO_BINARY) chown root:root $(bindir)/gnunet-helper-nat-server $(bindir)/gnunet-helper-nat-client $(nattest) || true
-	$(SUDO_BINARY) chmod u+s $(bindir)/gnunet-helper-nat-server $(bindir)/gnunet-helper-nat-client $(nattest) || true
+	$(top_srcdir)/src/nat/install-nat-helper.sh $(libexecdir) $(SUDO_BINARY) || true
 else
 install-exec-hook:
 endif
 
 bin_PROGRAMS = \
- gnunet-nat-server \
+ gnunet-nat-server 
+
+libexec_PROGRAMS = \
  $(NATBIN) 
 
 gnunet_nat_server_SOURCES = \
@@ -57,8 +54,9 @@ lib_LTLIBRARIES = libgnunetnat.la
 
 libgnunetnat_la_SOURCES = \
   nat.c nat.h \
+  nat_auto.c \
   nat_test.c \
-  nat_mini.c
+  nat_mini.c 
 
 libgnunetnat_la_LIBADD = \
   $(top_builddir)/src/util/libgnunetutil.la \
@@ -66,7 +64,7 @@ libgnunetnat_la_LIBADD = \
 
 libgnunetnat_la_LDFLAGS = \
   $(GN_LIB_LDFLAGS) $(WINFLAGS) \
-  -version-info 0:0:0		
+  -version-info 1:0:1
 
 check_PROGRAMS = \
   test_nat \

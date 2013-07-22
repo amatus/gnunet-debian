@@ -100,6 +100,11 @@ struct in6_ifreq
 static const char *sbin_iptables;
 
 /**
+ * Name and full path of sysctl binary
+ */
+static const char *sbin_sysctl;
+
+/**
  * Name and full path of IPTABLES binary.
  */
 static const char *sbin_ip;
@@ -150,6 +155,33 @@ signal_handler (int signal)
 
 
 /**
+ * Open '/dev/null' and make the result the given
+ * file descriptor.
+ *
+ * @param target_fd desired FD to point to /dev/null
+ * @param flags open flags (O_RDONLY, O_WRONLY)
+ */
+static void
+open_dev_null (int target_fd,
+	       int flags)
+{
+  int fd;
+
+  fd = open ("/dev/null", flags);
+  if (-1 == fd)
+    abort ();
+  if (fd == target_fd)
+    return;
+  if (-1 == dup2 (fd, target_fd))
+  {    
+    (void) close (fd);
+    abort ();
+  }
+  (void) close (fd);
+}
+
+
+/**
  * Run the given command and wait for it to complete.
  * 
  * @param file name of the binary to run
@@ -178,7 +210,9 @@ fork_and_exec (const char *file,
     /* close stdin/stdout to not cause interference
        with the helper's main protocol! */
     (void) close (0); 
+    open_dev_null (0, O_RDONLY);
     (void) close (1); 
+    open_dev_null (1, O_WRONLY);
     (void) execv (file, cmd);
     /* can only get here on error */
     fprintf (stderr, 
@@ -492,7 +526,7 @@ run (int fd_tun)
      * We are supposed to read and the buffer is not empty
      * -> select on write to stdout
      */
-    if (0 != buftun_size)
+    if (0 < buftun_size)
       FD_SET (1, &fds_w);
 
     /*
@@ -536,7 +570,10 @@ run (int fd_tun)
         {
 	  if ( (errno == EINTR) ||
 	       (errno == EAGAIN) )
-	    continue;
+	    {
+	      buftun_size = 0;
+	      continue;
+	    }
           fprintf (stderr, "read-error: %s\n", strerror (errno));
 	  return;
         }
@@ -675,6 +712,7 @@ PROCESS_BUFFER:
  *         25-39 failed to drop privs and then failed to undo some changes to routing table
  *         40 failed to regain privs
  *         41-55 failed to regain prisv and then failed to undo some changes to routing table
+ *         254 insufficient priviledges
  *         255 failed to handle kill signal properly
  */
 int
@@ -684,12 +722,29 @@ main (int argc, char *const*argv)
   char dev[IFNAMSIZ];
   char mygid[32];
   int fd_tun;
+  uid_t uid;
 
   if (6 != argc)
   {
     fprintf (stderr, "Fatal: must supply 6 arguments!\n");
     return 1;
   }
+
+  /* assert privs so we can modify the firewall rules! */
+  uid = getuid ();
+#ifdef HAVE_SETRESUID
+  if (0 != setresuid (uid, 0, 0))
+  {
+    fprintf (stderr, "Failed to setresuid to root: %s\n", strerror (errno));
+    return 254;
+  }
+#else
+  if (0 != seteuid (0)) 
+  {
+    fprintf (stderr, "Failed to seteuid back to root: %s\n", strerror (errno));
+    return 254;
+  }
+#endif
 
   /* verify that the binaries were care about are executable */
   if (0 == access ("/sbin/iptables", X_OK))
@@ -713,6 +768,17 @@ main (int argc, char *const*argv)
 	     "Fatal: executable ip not found in approved directories: %s\n",
 	     strerror (errno));
     return 4;
+  }
+  if (0 == access ("/sbin/sysctl", X_OK))
+    sbin_sysctl = "/sbin/sysctl";
+  else if (0 == access ("/usr/sbin/sysctl", X_OK))
+    sbin_sysctl = "/usr/sbin/sysctl";
+  else
+  {
+    fprintf (stderr,
+             "Fatal: executable sysctl not found in approved directories: %s\n",
+             strerror (errno));
+    return 5;
   }
 
   /* setup 'mygid' string */
@@ -778,6 +844,22 @@ main (int argc, char *const*argv)
   strncpy (dev, argv[1], IFNAMSIZ);
   dev[IFNAMSIZ - 1] = '\0';
 
+  /* Disable rp filtering */
+  {
+    char *const sysctl_args[] = {"sysctl", "-w",
+      "net.ipv4.conf.all.rp_filter=0", NULL};
+    char *const sysctl_args2[] = {"sysctl", "-w",
+      "net.ipv4.conf.default.rp_filter=0", NULL};
+    if ((0 != fork_and_exec (sbin_sysctl, sysctl_args)) ||
+        (0 != fork_and_exec (sbin_sysctl, sysctl_args2)))
+    {
+      fprintf (stderr,
+               "Failed to disable rp filtering.\n");
+      return 5;
+    }
+  }
+  
+  
   /* now open virtual interface (first part that requires root) */
   if (-1 == (fd_tun = init_tun (dev)))
   {
@@ -814,6 +896,7 @@ main (int argc, char *const*argv)
 
     set_address4 (dev, address, mask);
   }
+
   
   /* update routing tables -- next part why we need SUID! */
   /* Forward everything from our EGID (which should only be held
@@ -863,7 +946,6 @@ main (int argc, char *const*argv)
 
   /* drop privs *except* for the saved UID; this is not perfect, but better
      than doing nothing */
-  uid_t uid = getuid ();
 #ifdef HAVE_SETRESUID
   if (0 != setresuid (uid, uid, 0))
   {

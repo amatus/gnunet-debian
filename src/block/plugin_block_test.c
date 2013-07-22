@@ -28,8 +28,6 @@
 #include "platform.h"
 #include "gnunet_block_plugin.h"
 
-#define DEBUG_TEST GNUNET_EXTRA_LOGGING
-
 
 /**
  * Number of bits we set per entry in the bloomfilter.
@@ -54,18 +52,18 @@
  */
 static enum GNUNET_BLOCK_EvaluationResult
 block_plugin_test_evaluate (void *cls, enum GNUNET_BLOCK_Type type,
-                            const GNUNET_HashCode * query,
+                            const struct GNUNET_HashCode * query,
                             struct GNUNET_CONTAINER_BloomFilter **bf,
                             int32_t bf_mutator, const void *xquery,
                             size_t xquery_size, const void *reply_block,
                             size_t reply_block_size)
 {
-  GNUNET_HashCode chash;
-  GNUNET_HashCode mhash;
+  struct GNUNET_HashCode chash;
+  struct GNUNET_HashCode mhash;
 
-  if (type != GNUNET_BLOCK_TYPE_TEST)
+  if ( GNUNET_BLOCK_TYPE_TEST != type)
     return GNUNET_BLOCK_EVALUATION_TYPE_NOT_SUPPORTED;
-  if (xquery_size != 0)
+  if (0 != xquery_size)
   {
     GNUNET_break_op (0);
     return GNUNET_BLOCK_EVALUATION_REQUEST_INVALID;
@@ -106,7 +104,7 @@ block_plugin_test_evaluate (void *cls, enum GNUNET_BLOCK_Type type,
 static int
 block_plugin_test_get_key (void *cls, enum GNUNET_BLOCK_Type type,
                            const void *block, size_t block_size,
-                           GNUNET_HashCode * key)
+                           struct GNUNET_HashCode * key)
 {
   /* always fails since there is no fixed relationship between
    * keys and values for test values */

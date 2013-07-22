@@ -1,6 +1,6 @@
 /*
      This file is part of GNUnet.
-     (C) 2009, 2010, 2011 Christian Grothoff (and other contributing authors)
+     (C) 2009, 2010, 2011, 2012 Christian Grothoff (and other contributing authors)
 
      GNUnet is free software; you can redistribute it and/or modify
      it under the terms of the GNU General Public License as published
@@ -17,9 +17,7 @@
      Free Software Foundation, Inc., 59 Temple Place - Suite 330,
      Boston, MA 02111-1307, USA.
 */
-
 /**
- *
  * @file gns/gnunet-service-gns_interceptor.c
  * @brief GNUnet GNS interceptor logic
  * @author Martin Schanzenbach
@@ -32,21 +30,25 @@
 #include "gnunet-service-gns_resolver.h"
 #include "gns.h"
 
-#define MAX_DNS_LABEL_LENGTH 63
-
 /**
  * Handle to a DNS intercepted
  * reslution request
  */
 struct InterceptLookupHandle
 {
-  /* the request handle to reply to */
+  /**
+   * the request handle to reply to 
+   */
   struct GNUNET_DNS_RequestHandle *request_handle;
   
-  /* the dns parser packet received */
+  /**
+   * the dns parser packet received 
+   */
   struct GNUNET_DNSPARSER_Packet *packet;
   
-  /* the query parsed from the packet */
+  /**
+   * the query parsed from the packet 
+   */
   struct GNUNET_DNSPARSER_Query *query;
 };
 
@@ -71,6 +73,7 @@ static struct GNUNET_CRYPTO_RsaPrivateKey *our_key;
  */
 static struct GNUNET_TIME_Relative default_lookup_timeout;
 
+
 /**
  * Reply to dns request with the result from our lookup.
  *
@@ -79,10 +82,10 @@ static struct GNUNET_TIME_Relative default_lookup_timeout;
  * @param rd the record data
  */
 static void
-reply_to_dns(void* cls, uint32_t rd_count,
-             const struct GNUNET_NAMESTORE_RecordData *rd)
+reply_to_dns (void* cls, uint32_t rd_count,
+	      const struct GNUNET_NAMESTORE_RecordData *rd)
 {
-  int i;
+  uint32_t i;
   size_t len;
   int ret;
   char *buf;
@@ -120,12 +123,12 @@ reply_to_dns(void* cls, uint32_t rd_count,
       answer_records[i].type = rd[i].record_type;
       switch(rd[i].record_type)
       {
-       case GNUNET_GNS_RECORD_TYPE_NS:
-       case GNUNET_GNS_RECORD_TYPE_CNAME:
-       case GNUNET_GNS_RECORD_TYPE_PTR:
+       case GNUNET_GNS_RECORD_NS:
+       case GNUNET_GNS_RECORD_CNAME:
+       case GNUNET_GNS_RECORD_PTR:
          answer_records[i].data.hostname = (char*)rd[i].data;
          break;
-       case GNUNET_GNS_RECORD_TYPE_SOA:
+       case GNUNET_GNS_RECORD_SOA:
          answer_records[i].data.soa =
            (struct GNUNET_DNSPARSER_SoaRecord *)rd[i].data;
          break;
@@ -137,7 +140,8 @@ reply_to_dns(void* cls, uint32_t rd_count,
         answer_records[i].data.raw.data_len = rd[i].data_size;
         answer_records[i].data.raw.data = (char*)rd[i].data;
       }
-      answer_records[i].expiration_time = rd[i].expiration;
+      GNUNET_break (0 == (rd[i].flags & GNUNET_NAMESTORE_RF_RELATIVE_EXPIRATION));
+      answer_records[i].expiration_time.abs_value = rd[i].expiration_time;
       answer_records[i].class = GNUNET_DNSPARSER_CLASS_INTERNET;//hmmn
     }
     else
@@ -146,12 +150,12 @@ reply_to_dns(void* cls, uint32_t rd_count,
       additional_records[i].type = rd[i].record_type;
       switch(rd[i].record_type)
       {
-       case GNUNET_GNS_RECORD_TYPE_NS:
-       case GNUNET_GNS_RECORD_TYPE_CNAME:
-       case GNUNET_GNS_RECORD_TYPE_PTR:
+       case GNUNET_GNS_RECORD_NS:
+       case GNUNET_GNS_RECORD_CNAME:
+       case GNUNET_GNS_RECORD_PTR:
          additional_records[i].data.hostname = (char*)rd[i].data;
          break;
-       case GNUNET_GNS_RECORD_TYPE_SOA:
+       case GNUNET_GNS_RECORD_SOA:
          additional_records[i].data.soa =
            (struct GNUNET_DNSPARSER_SoaRecord *)rd[i].data;
          break;
@@ -163,7 +167,8 @@ reply_to_dns(void* cls, uint32_t rd_count,
         additional_records[i].data.raw.data_len = rd[i].data_size;
         additional_records[i].data.raw.data = (char*)rd[i].data;
       }
-      additional_records[i].expiration_time = rd[i].expiration;
+      GNUNET_break (0 == (rd[i].flags & GNUNET_NAMESTORE_RF_RELATIVE_EXPIRATION));
+      additional_records[i].expiration_time.abs_value = rd[i].expiration_time;
       additional_records[i].class = GNUNET_DNSPARSER_CLASS_INTERNET;//hmmn
     }
   }
@@ -190,23 +195,25 @@ reply_to_dns(void* cls, uint32_t rd_count,
                                1024, /* FIXME magic from dns redirector */
                                &buf,
                                &len);
-  GNUNET_log(GNUNET_ERROR_TYPE_DEBUG,
-             "Built DNS response! (ret=%d,len=%d)\n", ret, len);
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+	      "Built DNS response! (ret=%d,len=%d)\n",
+	      ret, len);
   if (ret == GNUNET_OK)
   {
-    GNUNET_log(GNUNET_ERROR_TYPE_DEBUG,
-               "Answering DNS request\n");
-    GNUNET_DNS_request_answer(ilh->request_handle,
-                              len,
-                              buf);
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+		"Answering DNS request\n");
+    GNUNET_DNS_request_answer (ilh->request_handle,
+			       len,
+			       buf);
 
-    GNUNET_free(buf);
-    GNUNET_log(GNUNET_ERROR_TYPE_DEBUG, "Answered DNS request\n");
+    GNUNET_free (buf);
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+		"Answered DNS request\n");
   }
   else
   {
-    GNUNET_log(GNUNET_ERROR_TYPE_ERROR,
-               "Error building DNS response! (ret=%d)", ret);
+    GNUNET_log (GNUNET_ERROR_TYPE_ERROR,
+		"Error building DNS response! (ret=%d)", ret);
   }
   
   packet->num_answers = 0;
@@ -227,8 +234,8 @@ reply_to_dns(void* cls, uint32_t rd_count,
  * @param q the DNS query we received parsed from p
  */
 static void
-start_resolution_for_dns(struct GNUNET_DNS_RequestHandle *request,
-                          struct GNUNET_DNSPARSER_Packet *p,
+start_resolution_for_dns (struct GNUNET_DNS_RequestHandle *request,
+			  struct GNUNET_DNSPARSER_Packet *p,
                           struct GNUNET_DNSPARSER_Query *q)
 {
   struct InterceptLookupHandle* ilh;
@@ -236,7 +243,6 @@ start_resolution_for_dns(struct GNUNET_DNS_RequestHandle *request,
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
               "Starting resolution for %s (type=%d)!\n",
               q->name, q->type);
-  
   ilh = GNUNET_malloc(sizeof(struct InterceptLookupHandle));
   ilh->packet = p;
   ilh->query = q;
@@ -246,9 +252,9 @@ start_resolution_for_dns(struct GNUNET_DNS_RequestHandle *request,
   gns_resolver_lookup_record(our_zone, our_zone, q->type, q->name,
                              our_key,
                              default_lookup_timeout,
+                             GNUNET_NO,
                              &reply_to_dns, ilh);
 }
-
 
 
 /**
@@ -261,17 +267,16 @@ start_resolution_for_dns(struct GNUNET_DNS_RequestHandle *request,
  * @param request udp payload of the DNS request
  */
 static void
-handle_dns_request(void *cls,
-                   struct GNUNET_DNS_RequestHandle *rh,
-                   size_t request_length,
-                   const char *request)
+handle_dns_request (void *cls,
+		    struct GNUNET_DNS_RequestHandle *rh,
+		    size_t request_length,
+		    const char *request)
 {
   struct GNUNET_DNSPARSER_Packet *p;
 
-  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Hijacked a DNS request...processing\n");
-  p = GNUNET_DNSPARSER_parse (request, request_length);
-  
-  if (NULL == p)
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, 
+	      "Hijacked a DNS request...processing\n");
+  if (NULL == (p = GNUNET_DNSPARSER_parse (request, request_length)))
   {
     GNUNET_log (GNUNET_ERROR_TYPE_WARNING,
                 "Received malformed DNS packet, leaving it untouched\n");
@@ -292,7 +297,7 @@ handle_dns_request(void *cls,
    * The way it is implemented here now is buggy and will lead to erratic
    * behaviour (if multiple queries are present).
    */
-  if (p->num_queries == 0)
+  if (0 == p->num_queries)
   {
     GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
                 "No Queries in DNS packet... forwarding\n");
@@ -301,35 +306,31 @@ handle_dns_request(void *cls,
     return;
   }
 
-  if (p->num_queries > 1)
-  {
-    /* Note: We could also look for .gnunet */
-    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
-                ">1 queriy in DNS packet... odd. We only process #1\n");
-  }
-
-  
   /**
-   * Check for .gnunet/.zkey
+   * Check for .gads/.zkey
    */
   
-  if ((is_gnunet_tld(p->queries[0].name) == GNUNET_YES) ||
+  if ((is_gads_tld(p->queries[0].name) == GNUNET_YES) ||
       (is_zkey_tld(p->queries[0].name) == GNUNET_YES) ||
       (strcmp(p->queries[0].name, GNUNET_GNS_TLD) == 0))
   {
-    start_resolution_for_dns(rh, p, p->queries);
+    if (p->num_queries > 1)
+    {
+      /* Note: We could also look for .gads */
+      GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+		  ">1 queriy in DNS packet... odd. We only process #1\n");
+    }
+    start_resolution_for_dns (rh, p, p->queries);
+    return;
   }
-  else
-  {
-    /**
-     * This request does not concern us. Forward to real DNS.
-     */
-    GNUNET_log(GNUNET_ERROR_TYPE_DEBUG,
-               "Request for %s is forwarded to DNS\n", p->queries[0].name);
-    GNUNET_DNS_request_forward (rh);
-    GNUNET_DNSPARSER_free_packet (p);
-  }
-
+  /**
+   * This request does not concern us. Forward to real DNS.
+   */
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
+	      "Request for %s is forwarded to DNS\n", 
+	      p->queries[0].name);
+  GNUNET_DNS_request_forward (rh);
+  GNUNET_DNSPARSER_free_packet (p);
 }
 
 
@@ -342,53 +343,48 @@ handle_dns_request(void *cls,
  * @return GNUNET_OK on success
  */
 int
-gns_interceptor_init(struct GNUNET_CRYPTO_ShortHashCode zone,
-                     struct GNUNET_CRYPTO_RsaPrivateKey *key,
-                     const struct GNUNET_CONFIGURATION_Handle *c)
+gns_interceptor_init (struct GNUNET_CRYPTO_ShortHashCode zone,
+		      struct GNUNET_CRYPTO_RsaPrivateKey *key,
+		      const struct GNUNET_CONFIGURATION_Handle *c)
 {
-  unsigned long long default_lookup_timeout_secs = 0;
-
   GNUNET_log(GNUNET_ERROR_TYPE_INFO,
              "DNS hijacking enabled... connecting to service.\n");
-
   our_zone = zone;
   our_key = key;
   /**
    * Do gnunet dns init here
    */
-  dns_handle = GNUNET_DNS_connect(c,
-                                  GNUNET_DNS_FLAG_PRE_RESOLUTION,
-                                  &handle_dns_request, /* rh */
-                                  NULL); /* Closure */
+  dns_handle = GNUNET_DNS_connect (c,
+				   GNUNET_DNS_FLAG_PRE_RESOLUTION,
+				   &handle_dns_request, /* rh */
+				   NULL); /* Closure */
 
-  if (GNUNET_OK ==
-      GNUNET_CONFIGURATION_get_value_number(c, "gns",
-                                            "DEFAULT_LOOKUP_TIMEOUT",
-                                            &default_lookup_timeout_secs))
-  {
-    default_lookup_timeout = GNUNET_TIME_relative_multiply(
-                                                  GNUNET_TIME_UNIT_SECONDS,
-                                                  default_lookup_timeout_secs);
-  }
-
+  if (GNUNET_OK !=
+      GNUNET_CONFIGURATION_get_value_time (c, "gns",
+					   "DEFAULT_LOOKUP_TIMEOUT",
+					   &default_lookup_timeout))
+    default_lookup_timeout = GNUNET_TIME_UNIT_ZERO;
   if (NULL == dns_handle)
   {
     GNUNET_log(GNUNET_ERROR_TYPE_ERROR,
              "Failed to connect to the dnsservice!\n");
     return GNUNET_SYSERR;
   }
-
   return GNUNET_YES;
 }
+
 
 /**
  * Disconnect from interceptor
  */
 void
-gns_interceptor_stop(void)
+gns_interceptor_stop ()
 {
-  if (dns_handle)
+  if (NULL != dns_handle)
+  {
     GNUNET_DNS_disconnect(dns_handle);
+    dns_handle = NULL;
+  }
 }
 
 /* end of gns_interceptor.c */

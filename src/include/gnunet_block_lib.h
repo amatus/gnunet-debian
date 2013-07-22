@@ -98,7 +98,27 @@ enum GNUNET_BLOCK_Type
     /**
      * Block for storing record data
      */
-  GNUNET_BLOCK_TYPE_GNS_NAMERECORD = 11
+  GNUNET_BLOCK_TYPE_GNS_NAMERECORD = 11,
+
+    /**
+     * Block for storing mesh peers
+     */
+  GNUNET_BLOCK_TYPE_MESH_PEER = 20,
+
+    /**
+     * Block for finding peers by type
+     */
+  GNUNET_BLOCK_TYPE_MESH_PEER_BY_TYPE = 21,
+
+    /**
+     * Block to store a mesh regex state
+     */
+  GNUNET_BLOCK_TYPE_REGEX = 22,
+
+    /**
+     * Block to store a mesh regex accepting state
+     */
+  GNUNET_BLOCK_TYPE_REGEX_ACCEPT = 23
 };
 
 
@@ -128,21 +148,26 @@ enum GNUNET_BLOCK_EvaluationResult
   GNUNET_BLOCK_EVALUATION_RESULT_INVALID = 3,
 
     /**
+     * Block does not match xquery (valid result, not relevant for the request)
+     */
+  GNUNET_BLOCK_EVALUATION_RESULT_IRRELEVANT = 4,
+
+    /**
      * Query is valid, no reply given.
      */
-  GNUNET_BLOCK_EVALUATION_REQUEST_VALID = 4,
+  GNUNET_BLOCK_EVALUATION_REQUEST_VALID = 10,
 
     /**
      * Query format does not match block type (invalid query).  For
      * example, xquery not given or xquery_size not appropriate for
      * type.
      */
-  GNUNET_BLOCK_EVALUATION_REQUEST_INVALID = 5,
+  GNUNET_BLOCK_EVALUATION_REQUEST_INVALID = 11,
 
     /**
      * Specified block type not supported by this plugin.
      */
-  GNUNET_BLOCK_EVALUATION_TYPE_NOT_SUPPORTED = 6
+  GNUNET_BLOCK_EVALUATION_TYPE_NOT_SUPPORTED = 20
 };
 
 
@@ -160,8 +185,8 @@ struct GNUNET_BLOCK_Context;
  * @param hc where to store the result.
  */
 void
-GNUNET_BLOCK_mingle_hash (const GNUNET_HashCode * in, uint32_t mingle_number,
-                          GNUNET_HashCode * hc);
+GNUNET_BLOCK_mingle_hash (const struct GNUNET_HashCode * in, uint32_t mingle_number,
+                          struct GNUNET_HashCode * hc);
 
 
 /**
@@ -204,7 +229,7 @@ GNUNET_BLOCK_context_destroy (struct GNUNET_BLOCK_Context *ctx);
 enum GNUNET_BLOCK_EvaluationResult
 GNUNET_BLOCK_evaluate (struct GNUNET_BLOCK_Context *ctx,
                        enum GNUNET_BLOCK_Type type,
-                       const GNUNET_HashCode * query,
+                       const struct GNUNET_HashCode * query,
                        struct GNUNET_CONTAINER_BloomFilter **bf,
                        int32_t bf_mutator, const void *xquery,
                        size_t xquery_size, const void *reply_block,
@@ -227,7 +252,7 @@ GNUNET_BLOCK_evaluate (struct GNUNET_BLOCK_Context *ctx,
 int
 GNUNET_BLOCK_get_key (struct GNUNET_BLOCK_Context *ctx,
                       enum GNUNET_BLOCK_Type type, const void *block,
-                      size_t block_size, GNUNET_HashCode * key);
+                      size_t block_size, struct GNUNET_HashCode * key);
 
 
 
@@ -243,7 +268,7 @@ GNUNET_BLOCK_get_key (struct GNUNET_BLOCK_Context *ctx,
  */
 struct GNUNET_CONTAINER_BloomFilter *
 GNUNET_BLOCK_construct_bloomfilter (int32_t bf_mutator,
-                                    const GNUNET_HashCode * seen_results,
+                                    const struct GNUNET_HashCode * seen_results,
                                     unsigned int seen_results_count);
 
 

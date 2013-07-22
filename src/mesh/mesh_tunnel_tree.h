@@ -126,13 +126,24 @@ path_destroy (struct MeshPeerPath *p);
 /******************************************************************************/
 
 /**
- * Method called whenever a node has been marked as disconnected.
+ * Iterator over all children of a node.
  *
  * @param cls Closure.
- * @param peer_id short ID of peer that is no longer reachable.
+ * @param peer_id Short ID of the peer.
  */
 typedef void (*MeshTreeCallback) (void *cls, GNUNET_PEER_Id peer_id);
 
+
+/**
+ * Iterator over all nodes in a tree.
+ *
+ * @param cls Closure.
+ * @param peer_id Short ID of the peer.
+ * @param peer_id Short ID of the parent of the peer.
+ */
+typedef void (*MeshWholeTreeCallback) (void *cls,
+                                       GNUNET_PEER_Id peer_id,
+                                       GNUNET_PEER_Id parent_id);
 
 /**
  * Create a new tunnel tree associated to a tunnel
@@ -210,11 +221,35 @@ tree_find_peer (struct MeshTunnelTree *tree, GNUNET_PEER_Id peer_id);
  *
  * @param tree Tree to use. Must have "me" set.
  * @param cb Callback to call over each child.
- * @param cls Closure.
+ * @param cb_cls Closure for @c cb.
  */
 void
-tree_iterate_children (struct MeshTunnelTree *tree, MeshTreeCallback cb,
-                       void *cls);
+tree_iterate_children (struct MeshTunnelTree *tree,
+                       MeshTreeCallback cb,
+                       void *cb_cls);
+
+
+/**
+ * Iterate over all nodes in the tree.
+ *
+ * @param tree Tree to use..
+ * @param cb Callback to call over each child.
+ * @param cb_cls Closure for @c cb.
+ *
+ * TODO: recursive implementation? (s/heap/stack/g)
+ */
+void
+tree_iterate_all (struct MeshTunnelTree *tree,
+                  MeshWholeTreeCallback cb,
+                  void *cb_cls);
+
+/**
+ * Count how many children does the local node have in the tree.
+ *
+ * @param tree Tree to use. Must have "me" set.
+ */
+unsigned int
+tree_count_children (struct MeshTunnelTree *tree);
 
 
 /**
@@ -301,6 +336,8 @@ tree_notify_connection_broken (struct MeshTunnelTree *t, GNUNET_PEER_Id p1,
  * it. It shouldn't have children, if it has they will be destroyed as well.
  * If the tree is not local and no longer has any paths, the root node will be
  * destroyed and marked as NULL.
+ *
+ * FIXME: dont destroy the root
  *
  * @param t Tunnel tree to use.
  * @param peer Short ID of the peer to remove from the tunnel tree.

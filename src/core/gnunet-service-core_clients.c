@@ -239,7 +239,7 @@ send_to_all_clients (const struct GNUNET_PeerIdentity *partner,
     if ( (0 != (options & GNUNET_CORE_OPTION_SEND_HDR_OUTBOUND)) &&
 	 (0 != (c->options & GNUNET_CORE_OPTION_SEND_FULL_OUTBOUND)) )
       continue;
-    GNUNET_log (GNUNET_ERROR_TYPE_INFO,
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
                 "Sending %u message with %u bytes to client interested in messages of type %u.\n",
 		options,
 		ntohs (msg->size),
@@ -298,7 +298,7 @@ handle_client_init (void *cls, struct GNUNET_SERVER_Client *client,
   c->options = ntohl (im->options);
   all_client_options |= c->options;
   c->types = (const uint16_t *) &c[1];
-  c->connectmap = GNUNET_CONTAINER_multihashmap_create (16);
+  c->connectmap = GNUNET_CONTAINER_multihashmap_create (16, GNUNET_NO);
   GNUNET_assert (GNUNET_YES ==
                  GNUNET_CONTAINER_multihashmap_put (c->connectmap,
                                                     &GSC_my_identity.hashPubKey,
@@ -349,7 +349,7 @@ handle_client_send_request (void *cls, struct GNUNET_SERVER_Client *client,
     return;
   }
   if (c->requests == NULL)
-    c->requests = GNUNET_CONTAINER_multihashmap_create (16);
+    c->requests = GNUNET_CONTAINER_multihashmap_create (16, GNUNET_NO);
   GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
               "Client asked for transmission to `%s'\n",
               GNUNET_i2s (&req->peer));
@@ -512,7 +512,12 @@ client_tokenizer_callback (void *cls, void *client,
 {
   struct TokenizerContext *tc = client;
   struct GSC_ClientActiveRequest *car = tc->car;
+  char buf[92];
 
+  GNUNET_snprintf (buf, sizeof (buf),
+		   gettext_noop ("# bytes of messages of type %u received"),
+		   (unsigned int) ntohs (message->type));
+  GNUNET_STATISTICS_update (GSC_stats, buf, ntohs (message->size), GNUNET_NO);  
   if (0 ==
       memcmp (&car->target, &GSC_my_identity,
               sizeof (struct GNUNET_PeerIdentity)))
@@ -559,7 +564,7 @@ client_tokenizer_callback (void *cls, void *client,
  * @return GNUNET_YES (continue iteration)
  */
 static int
-destroy_active_client_request (void *cls, const GNUNET_HashCode * key,
+destroy_active_client_request (void *cls, const struct GNUNET_HashCode * key,
                                void *value)
 {
   struct GSC_ClientActiveRequest *car = value;
@@ -812,13 +817,6 @@ GSC_CLIENTS_deliver_message (const struct GNUNET_PeerIdentity *sender,
   struct NotifyTrafficMessage *ntm;
   struct GNUNET_ATS_Information *a;
 
-  if (0 == options)
-  {
-    GNUNET_snprintf (buf, sizeof (buf),
-                     gettext_noop ("# bytes of messages of type %u received"),
-                     (unsigned int) ntohs (msg->type));
-    GNUNET_STATISTICS_update (GSC_stats, buf, msize, GNUNET_NO);
-  }
   if (size >= GNUNET_SERVER_MAX_MESSAGE_SIZE)
   {
     GNUNET_break (0);
@@ -899,8 +897,11 @@ GSC_CLIENTS_done ()
     GNUNET_SERVER_notification_context_destroy (notifier);
     notifier = NULL;
   }
-  GNUNET_SERVER_mst_destroy (client_mst);
-  client_mst = NULL;
+  if (NULL != client_mst)
+  {
+    GNUNET_SERVER_mst_destroy (client_mst);
+    client_mst = NULL;
+  }
 }
 
 /* end of gnunet-service-core_clients.c */

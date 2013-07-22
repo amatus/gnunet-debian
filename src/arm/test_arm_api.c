@@ -30,8 +30,6 @@
 #include "gnunet_program_lib.h"
 #include "gnunet_resolver_service.h"
 
-#define VERBOSE GNUNET_NO
-
 #define START_ARM GNUNET_YES
 
 #define START_TIMEOUT GNUNET_TIME_relative_multiply (GNUNET_TIME_UNIT_MILLISECONDS, 1500)
@@ -111,7 +109,7 @@ arm_notify (void *cls, enum GNUNET_ARM_ProcessStatus success)
       GNUNET_ARM_stop_service (arm, "arm", TIMEOUT, &arm_stopped, NULL);
 #endif
     }
-  GNUNET_ARM_start_service (arm, "resolver", START_TIMEOUT, &resolver_notify,
+  GNUNET_ARM_start_service (arm, "resolver", GNUNET_OS_INHERIT_STD_OUT_AND_ERR, START_TIMEOUT, &resolver_notify,
 			    NULL);
 }
 
@@ -120,10 +118,23 @@ static void
 task (void *cls, char *const *args, const char *cfgfile,
       const struct GNUNET_CONFIGURATION_Handle *c)
 {
+  char *armconfig;
   cfg = c;
+  if (NULL != cfgfile)
+  {
+    if (GNUNET_OK !=
+        GNUNET_CONFIGURATION_get_value_filename (cfg, "arm", "CONFIG",
+					       &armconfig))
+    {
+      GNUNET_CONFIGURATION_set_value_string (cfg, "arm", "CONFIG",
+                                             cfgfile);
+    }
+    else
+      GNUNET_free (armconfig);
+  }
   arm = GNUNET_ARM_connect (cfg, NULL);
 #if START_ARM
-  GNUNET_ARM_start_service (arm, "arm", START_TIMEOUT, &arm_notify, NULL);
+  GNUNET_ARM_start_service (arm, "arm", GNUNET_OS_INHERIT_STD_OUT_AND_ERR, START_TIMEOUT, &arm_notify, NULL);
 #else
   arm_notify (NULL, GNUNET_YES);
 #endif
@@ -137,9 +148,6 @@ check ()
   char *const argv[] = {
     "test-arm-api",
     "-c", "test_arm_api_data.conf",
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
     NULL
   };
   struct GNUNET_GETOPT_CommandLineOption options[] = {
@@ -159,11 +167,7 @@ main (int argc, char *argv[])
 
 
   GNUNET_log_setup ("test-arm-api",
-#if VERBOSE
-		    "DEBUG",
-#else
 		    "WARNING",
-#endif
 		    NULL);
   ret = check ();
 

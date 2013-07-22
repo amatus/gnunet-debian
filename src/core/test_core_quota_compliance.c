@@ -38,8 +38,6 @@
 #define ASYMMETRIC_SEND_LIMITED 1
 #define ASYMMETRIC_RECV_LIMITED 2
 
-#define START_ARM GNUNET_YES
-
 /**
  * Note that this value must not significantly exceed
  * 'MAX_PENDING' in 'gnunet-service-transport.c', otherwise
@@ -84,9 +82,7 @@ struct PeerContext
   struct GNUNET_STATISTICS_Handle *stats;
   struct GNUNET_TRANSPORT_GetHelloHandle *ghh;
   int connect_status;
-#if START_ARM
   struct GNUNET_OS_Process *arm_proc;
-#endif
 };
 
 static struct PeerContext p1;
@@ -146,6 +142,8 @@ terminate_task (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
   p1.th = NULL;
   GNUNET_TRANSPORT_disconnect (p2.th);
   p2.th = NULL;
+  GNUNET_free_non_null (p1.hello);
+  GNUNET_free_non_null (p2.hello);
 }
 
 
@@ -191,8 +189,8 @@ try_connect (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
   connect_task =
       GNUNET_SCHEDULER_add_delayed (GNUNET_TIME_UNIT_SECONDS, &try_connect,
                                     NULL);
-  GNUNET_TRANSPORT_try_connect (p1.th, &p2.id);
-  GNUNET_TRANSPORT_try_connect (p2.th, &p1.id);
+  GNUNET_TRANSPORT_try_connect (p1.th, &p2.id, NULL, NULL); /*FIXME TRY_CONNECT change */
+  GNUNET_TRANSPORT_try_connect (p2.th, &p1.id, NULL, NULL); /*FIXME TRY_CONNECT change */
 }
 
 /**
@@ -527,7 +525,7 @@ init_notify (void *cls, struct GNUNET_CORE_Handle *server,
     OKPP;
     /* connect p2 */
     p2.ch =
-        GNUNET_CORE_connect (p2.cfg, 1, &p2, &init_notify, &connect_notify,
+        GNUNET_CORE_connect (p2.cfg, &p2, &init_notify, &connect_notify,
                              &disconnect_notify, &inbound_notify, GNUNET_YES,
                              &outbound_notify, GNUNET_YES, handlers);
   }
@@ -570,19 +568,21 @@ process_hello (void *cls, const struct GNUNET_MessageHeader *message)
 static void
 setup_peer (struct PeerContext *p, const char *cfgname)
 {
+  char *binary;
+
+  binary = GNUNET_OS_get_libexec_binary_path ("gnunet-service-arm");
   p->cfg = GNUNET_CONFIGURATION_create ();
-#if START_ARM
   p->arm_proc =
-    GNUNET_OS_start_process (GNUNET_YES, NULL, NULL, "gnunet-service-arm",
+    GNUNET_OS_start_process (GNUNET_YES, GNUNET_OS_INHERIT_STD_OUT_AND_ERR, NULL, NULL, binary,
                                "gnunet-service-arm",
                                "-c", cfgname, NULL);
-#endif
   GNUNET_assert (GNUNET_OK == GNUNET_CONFIGURATION_load (p->cfg, cfgname));
   p->stats = GNUNET_STATISTICS_create ("core", p->cfg);
   GNUNET_assert (p->stats != NULL);
   p->th = GNUNET_TRANSPORT_connect (p->cfg, NULL, p, NULL, NULL, NULL);
   GNUNET_assert (p->th != NULL);
   p->ghh = GNUNET_TRANSPORT_get_hello (p->th, &process_hello, p);
+  GNUNET_free (binary);
 }
 
 
@@ -629,7 +629,7 @@ run (void *cls, char *const *args, const char *cfgfile,
                                                       &current_quota_p2_out));
 
   p1.ch =
-      GNUNET_CORE_connect (p1.cfg, 1, &p1, &init_notify, &connect_notify,
+      GNUNET_CORE_connect (p1.cfg, &p1, &init_notify, &connect_notify,
                            &disconnect_notify, &inbound_notify, GNUNET_YES,
                            &outbound_notify, GNUNET_YES, handlers);
 }
@@ -638,7 +638,6 @@ run (void *cls, char *const *args, const char *cfgfile,
 static void
 stop_arm (struct PeerContext *p)
 {
-#if START_ARM
   if (0 != GNUNET_OS_process_kill (p->arm_proc, SIGTERM))
     GNUNET_log_strerror (GNUNET_ERROR_TYPE_WARNING, "kill");
   if (GNUNET_OS_process_wait (p->arm_proc) != GNUNET_OK)
@@ -647,7 +646,6 @@ stop_arm (struct PeerContext *p)
               GNUNET_OS_process_get_pid (p->arm_proc));
   GNUNET_OS_process_destroy (p->arm_proc);
   p->arm_proc = NULL;
-#endif
   GNUNET_CONFIGURATION_destroy (p->cfg);
 }
 

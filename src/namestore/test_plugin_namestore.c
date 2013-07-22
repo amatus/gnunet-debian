@@ -25,8 +25,8 @@
 #include "platform.h"
 #include "gnunet_util_lib.h"
 #include "gnunet_namestore_plugin.h"
+#include "gnunet_testing_lib.h"
 
-#define VERBOSE GNUNET_NO
 
 #define ASSERT(x) do { if (! (x)) { printf("Error at %s:%d\n", __FILE__, __LINE__); goto FAILURE;} } while (0)
 
@@ -154,7 +154,7 @@ put_record (struct GNUNET_NAMESTORE_PluginFunctions *nsp, int id)
   {
     rd[i].data = "Hello World";
     rd[i].data_size = id % 10;
-    rd[i].expiration = GNUNET_TIME_relative_to_absolute (GNUNET_TIME_UNIT_MINUTES);
+    rd[i].expiration_time = GNUNET_TIME_relative_to_absolute (GNUNET_TIME_UNIT_MINUTES).abs_value;
     rd[i].record_type = 1 + (id % 13);
     rd[i].flags = (id  % 7);    
   }
@@ -187,32 +187,24 @@ run (void *cls, char *const *args, const char *cfgfile,
 	     "Failed to initialize namestore.  Database likely not setup, skipping test.\n");
     return;
   }
-
   put_record (nsp, 1);
-
   get_record (nsp, 1);
 
   memset (&zone_key, 1, sizeof (zone_key));
   GNUNET_CRYPTO_short_hash (&zone_key, sizeof (zone_key), &zone);
   nsp->delete_zone (nsp->cls, &zone);
   unload_plugin (nsp);
-
 }
 
 
 int
 main (int argc, char *argv[])
 {
-  char *pos;
   char cfg_name[128];
-
   char *const xargv[] = {
     "test-plugin-namestore",
     "-c",
     cfg_name,
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
     NULL
   };
   struct GNUNET_GETOPT_CommandLineOption options[] = {
@@ -221,21 +213,9 @@ main (int argc, char *argv[])
 
   GNUNET_DISK_directory_remove ("/tmp/gnunet-test-plugin-namestore-sqlite");
   GNUNET_log_setup ("test-plugin-namestore",
-#if VERBOSE
-                    "DEBUG",
-#else
                     "WARNING",
-#endif
                     NULL);
-  /* determine name of plugin to use */
-  plugin_name = argv[0];
-  while (NULL != (pos = strstr (plugin_name, "_")))
-    plugin_name = pos + 1;
-  if (NULL != (pos = strstr (plugin_name, ".")))
-    pos[0] = 0;
-  else
-    pos = (char *) plugin_name;
-
+  plugin_name = GNUNET_TESTING_get_testname_from_underscore (argv[0]);
   GNUNET_snprintf (cfg_name, sizeof (cfg_name), "test_plugin_namestore_%s.conf",
                    plugin_name);
   GNUNET_PROGRAM_run ((sizeof (xargv) / sizeof (char *)) - 1, xargv,

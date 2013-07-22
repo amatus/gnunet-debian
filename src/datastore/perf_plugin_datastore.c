@@ -27,9 +27,8 @@
 #include "gnunet_util_lib.h"
 #include "gnunet_protocols.h"
 #include "gnunet_datastore_plugin.h"
+#include "gnunet_testing_lib.h"
 #include <gauger.h>
-
-#define VERBOSE GNUNET_NO
 
 /**
  * Target datastore size (in bytes).  Realistic sizes are
@@ -104,7 +103,7 @@ putValue (struct GNUNET_DATASTORE_PluginFunctions *api, int i, int k)
 {
   char value[65536];
   size_t size;
-  static GNUNET_HashCode key;
+  static struct GNUNET_HashCode key;
   static int ic;
   char *msg;
   unsigned int prio;
@@ -117,7 +116,7 @@ putValue (struct GNUNET_DATASTORE_PluginFunctions *api, int i, int k)
 
   /* generate random key */
   key.bits[0] = (unsigned int) GNUNET_TIME_absolute_get ().abs_value;
-  GNUNET_CRYPTO_hash (&key, sizeof (GNUNET_HashCode), &key);
+  GNUNET_CRYPTO_hash (&key, sizeof (struct GNUNET_HashCode), &key);
   memset (value, i, size);
   if (i > 255)
     memset (value, i - 255, size / 2);
@@ -150,7 +149,7 @@ test (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc);
 
 
 static int
-iterate_zeros (void *cls, const GNUNET_HashCode * key, uint32_t size,
+iterate_zeros (void *cls, const struct GNUNET_HashCode * key, uint32_t size,
                const void *data, enum GNUNET_BLOCK_Type type, uint32_t priority,
                uint32_t anonymity, struct GNUNET_TIME_Absolute expiration,
                uint64_t uid)
@@ -164,10 +163,10 @@ iterate_zeros (void *cls, const GNUNET_HashCode * key, uint32_t size,
   memcpy (&i, &cdata[4], sizeof (i));
   hits[i / 8] |= (1 << (i % 8));
 
-#if VERBOSE
-  FPRINTF (stderr, "Found result type=%u, priority=%u, size=%u, expire=%llu\n",
-           type, priority, size, (unsigned long long) expiration.abs_value);
-#endif
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, 
+	      "Found result %d type=%u, priority=%u, size=%u, expire=%llu\n",
+	      i,
+	      type, priority, size, (unsigned long long) expiration.abs_value);
   crc->cnt++;
   if (crc->cnt == PUT_10 / 4 - 1)
   {
@@ -198,7 +197,7 @@ iterate_zeros (void *cls, const GNUNET_HashCode * key, uint32_t size,
 
 
 static int
-expiration_get (void *cls, const GNUNET_HashCode * key, uint32_t size,
+expiration_get (void *cls, const struct GNUNET_HashCode * key, uint32_t size,
                 const void *data, enum GNUNET_BLOCK_Type type,
                 uint32_t priority, uint32_t anonymity,
                 struct GNUNET_TIME_Absolute expiration, uint64_t uid)
@@ -243,7 +242,7 @@ expiration_get (void *cls, const GNUNET_HashCode * key, uint32_t size,
 
 
 static int
-replication_get (void *cls, const GNUNET_HashCode * key, uint32_t size,
+replication_get (void *cls, const struct GNUNET_HashCode * key, uint32_t size,
                  const void *data, enum GNUNET_BLOCK_Type type,
                  uint32_t priority, uint32_t anonymity,
                  struct GNUNET_TIME_Absolute expiration, uint64_t uid)
@@ -343,9 +342,8 @@ test (void *cls, const struct GNUNET_SCHEDULER_TaskContext *tc)
     GNUNET_break (0);
     crc->phase = RP_ERROR;
   }
-#if VERBOSE
-  FPRINTF (stderr, "In phase %d, iteration %u\n", crc->phase, crc->cnt);
-#endif
+  GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, 
+	      "In phase %d, iteration %u\n", crc->phase, crc->cnt);
   switch (crc->phase)
   {
   case RP_ERROR:
@@ -438,6 +436,11 @@ run (void *cls, char *const *args, const char *cfgfile,
   struct GNUNET_DATASTORE_PluginFunctions *api;
   struct CpsRunContext *crc;
 
+  if (NULL == c)
+  {
+    GNUNET_break (0);
+    return;
+  }
   api = load_plugin (c);
   if (api == NULL)
   {
@@ -454,68 +457,38 @@ run (void *cls, char *const *args, const char *cfgfile,
 }
 
 
-static int
-check ()
+int
+main (int argc, char *argv[])
 {
+  char dir_name[128];
   char cfg_name[128];
-
-  char *const argv[] = {
+  char *const xargv[] = {
     "perf-plugin-datastore",
     "-c",
     cfg_name,
-#if VERBOSE
-    "-L", "DEBUG",
-#endif
     NULL
   };
   struct GNUNET_GETOPT_CommandLineOption options[] = {
     GNUNET_GETOPT_OPTION_END
   };
 
-  GNUNET_snprintf (category, sizeof (category), "DATASTORE-%s", plugin_name);
-  GNUNET_snprintf (cfg_name, sizeof (cfg_name),
-                   "perf_plugin_datastore_data_%s.conf", plugin_name);
-  GNUNET_PROGRAM_run ((sizeof (argv) / sizeof (char *)) - 1, argv,
-                      "perf-plugin-datastore", "nohelp", options, &run, NULL);
-  if (ok != 0)
-    FPRINTF (stderr, "Missed some testcases: %u\n", ok);
-  return ok;
-}
-
-
-int
-main (int argc, char *argv[])
-{
-  int ret;
-  char *pos;
-  char dir_name[128];
-
-  sleep (1);
-  /* determine name of plugin to use */
-  plugin_name = argv[0];
-  while (NULL != (pos = strstr (plugin_name, "_")))
-    plugin_name = pos + 1;
-  if (NULL != (pos = strstr (plugin_name, ".")))
-    pos[0] = 0;
-  else
-    pos = (char *) plugin_name;
-
+  plugin_name = GNUNET_TESTING_get_testname_from_underscore (argv[0]);
   GNUNET_snprintf (dir_name, sizeof (dir_name), "/tmp/perf-gnunet-datastore-%s",
                    plugin_name);
   GNUNET_DISK_directory_remove (dir_name);
   GNUNET_log_setup ("perf-plugin-datastore",
-#if VERBOSE
-                    "DEBUG",
-#else
                     "WARNING",
-#endif
                     NULL);
-  ret = check ();
-  if (pos != plugin_name)
-    pos[0] = '.';
+  GNUNET_snprintf (category, sizeof (category), "DATASTORE-%s", plugin_name);
+  GNUNET_snprintf (cfg_name, sizeof (cfg_name),
+                   "perf_plugin_datastore_data_%s.conf", plugin_name);
+  GNUNET_PROGRAM_run ((sizeof (xargv) / sizeof (char *)) - 1, xargv,
+                      "perf-plugin-datastore", "nohelp", options, &run, NULL);
+  if (ok != 0)
+    FPRINTF (stderr, "Missed some testcases: %u\n", ok);
   GNUNET_DISK_directory_remove (dir_name);
 
-  return ret;
+  return ok;
 }
 
 /* end of perf_plugin_datastore.c */

@@ -24,8 +24,7 @@
  * @author Christian Grothoff
  */
 #include "platform.h"
-#include "gnunet_getopt_lib.h"
-#include "gnunet_program_lib.h"
+#include "gnunet_util_lib.h"
 /* #include "gnunet_template_service.h" */
 
 /**
@@ -63,10 +62,15 @@ main (int argc, char *const *argv)
     /* FIMXE: add options here */
     GNUNET_GETOPT_OPTION_END
   };
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "gnunet-template",
-                              gettext_noop ("help text"), options, &run,
-                              NULL)) ? ret : 1;
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+
+  ret = (GNUNET_OK ==
+	 GNUNET_PROGRAM_run (argc, argv, "gnunet-template",
+			     gettext_noop ("help text"), options, &run,
+			     NULL)) ? ret : 1;
+  GNUNET_free ((void*) argv);
+  return ret;
 }
 
 /* end of gnunet-template.c */

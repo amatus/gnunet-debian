@@ -1,6 +1,6 @@
 /*
      This file is part of GNUnet.
-     (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2009 Christian Grothoff (and other contributing authors)
+     (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2009, 2012 Christian Grothoff (and other contributing authors)
 
      GNUnet is free software; you can redistribute it and/or modify
      it under the terms of the GNU General Public License as published
@@ -76,6 +76,19 @@ GNUNET_STRINGS_fancy_time_to_relative (const char *fancy_time,
 
 
 /**
+ * Convert a given fancy human-readable time to our internal
+ * representation.
+ *
+ * @param fancy_time human readable string (i.e. %Y-%m-%d %H:%M:%S)
+ * @param atime set to the absolute time
+ * @return GNUNET_OK on success, GNUNET_SYSERR on error
+ */
+int
+GNUNET_STRINGS_fancy_time_to_absolute (const char *fancy_time,
+                                       struct GNUNET_TIME_Absolute *atime);
+
+
+/**
  * Convert a given filesize into a fancy human-readable format.
  *
  * @param size number of bytes
@@ -95,7 +108,9 @@ GNUNET_STRINGS_byte_size_fancy (unsigned long long size);
  */
 char *
 GNUNET_STRINGS_conv (const char *input, size_t len,
-    const char *input_charset, const char *output_charset);
+		     const char *input_charset,
+		     const char *output_charset);
+
 
 /**
  * Convert the len characters long character sequence
@@ -108,7 +123,10 @@ GNUNET_STRINGS_conv (const char *input, size_t len,
  * @return the converted string (0-terminated)
  */
 char *
-GNUNET_STRINGS_to_utf8 (const char *input, size_t len, const char *charset);
+GNUNET_STRINGS_to_utf8 (const char *input, 
+			size_t len, 
+			const char *charset);
+
 
 /**
  * Convert the len bytes-long UTF-8 string
@@ -119,17 +137,9 @@ GNUNET_STRINGS_to_utf8 (const char *input, size_t len, const char *charset);
  *  string is returned.
  */
 char *
-GNUNET_STRINGS_from_utf8 (const char *input, size_t len, const char *charset);
-
-/**
- * Convert the utf-8 input string to lowercase
- * Output needs to be allocated appropriately
- *
- * @param input input string
- * @param output output buffer
- */
-void
-GNUNET_STRINGS_utf8_tolower(const char* input, char** output);
+GNUNET_STRINGS_from_utf8 (const char *input, 
+			  size_t len, 
+			  const char *charset);
 
 
 /**
@@ -140,7 +150,20 @@ GNUNET_STRINGS_utf8_tolower(const char* input, char** output);
  * @param output output buffer
  */
 void
-GNUNET_STRINGS_utf8_toupper(const char* input, char** output);
+GNUNET_STRINGS_utf8_tolower (const char* input, 
+			     char** output);
+
+
+/**
+ * Convert the utf-8 input string to lowercase
+ * Output needs to be allocated appropriately
+ *
+ * @param input input string
+ * @param output output buffer
+ */
+void
+GNUNET_STRINGS_utf8_toupper (const char* input,
+			     char** output);
 
 
 /**
@@ -156,16 +179,14 @@ GNUNET_STRINGS_filename_expand (const char *fil);
 
 
 /**
- * Fill a buffer of the given size with
- * count 0-terminated strings (given as varargs).
- * If "buffer" is NULL, only compute the amount of
- * space required (sum of "strlen(arg)+1").
+ * Fill a buffer of the given size with count 0-terminated strings
+ * (given as varargs).  If "buffer" is NULL, only compute the amount
+ * of space required (sum of "strlen(arg)+1").
  *
- * Unlike using "snprintf" with "%s", this function
- * will add 0-terminators after each string.  The
- * "GNUNET_string_buffer_tokenize" function can be
- * used to parse the buffer back into individual
- * strings.
+ * Unlike using "snprintf" with "%s", this function will add
+ * 0-terminators after each string.  The
+ * "GNUNET_string_buffer_tokenize" function can be used to parse the
+ * buffer back into individual strings.
  *
  * @param buffer the buffer to fill with strings, can
  *               be NULL in which case only the necessary
@@ -177,15 +198,16 @@ GNUNET_STRINGS_filename_expand (const char *fil);
  *         (or number of bytes that would have been written)
  */
 size_t
-GNUNET_STRINGS_buffer_fill (char *buffer, size_t size, unsigned int count, ...);
+GNUNET_STRINGS_buffer_fill (char *buffer, 
+			    size_t size, 
+			    unsigned int count, 
+			    ...);
 
 
 /**
- * Given a buffer of a given size, find "count"
- * 0-terminated strings in the buffer and assign
- * the count (varargs) of type "const char**" to the
- * locations of the respective strings in the
- * buffer.
+ * Given a buffer of a given size, find "count" 0-terminated strings
+ * in the buffer and assign the count (varargs) of type "const char**"
+ * to the locations of the respective strings in the buffer.
  *
  * @param buffer the buffer to parse
  * @param size size of the buffer
@@ -201,24 +223,30 @@ GNUNET_STRINGS_buffer_tokenize (const char *buffer, size_t size,
 
 
 /**
- * "man ctime_r", except for GNUnet time; also, unlike ctime, the
- * return value does not include the newline character.
+ * "asctime", except for GNUnet time.
+ * This is one of the very few calls in the entire API that is
+ * NOT reentrant!
  *
  * @param t the absolute time to convert
  * @return timestamp in human-readable form
  */
-char *
+const char *
 GNUNET_STRINGS_absolute_time_to_string (struct GNUNET_TIME_Absolute t);
 
 
 /**
  * Give relative time in human-readable fancy format.
+ * This is one of the very few calls in the entire API that is
+ * NOT reentrant! 
  *
  * @param delta time in milli seconds
+ * @param do_round are we allowed to round a bit?
  * @return string in human-readable form
  */
-char *
-GNUNET_STRINGS_relative_time_to_string (struct GNUNET_TIME_Relative delta);
+const char *
+GNUNET_STRINGS_relative_time_to_string (struct GNUNET_TIME_Relative delta,
+					int do_round);
+
 
 /**
  * "man basename"
@@ -251,8 +279,10 @@ GNUNET_STRINGS_get_short_name (const char *filename);
  * @return pointer to the next byte in 'out' or NULL on error.
  */
 char *
-GNUNET_STRINGS_data_to_string (const unsigned char *data, size_t size,
-			       char *out, size_t out_size);
+GNUNET_STRINGS_data_to_string (const unsigned char *data, 
+			       size_t size,
+			       char *out, 
+			       size_t out_size);
 
 
 /**
@@ -266,24 +296,11 @@ GNUNET_STRINGS_data_to_string (const unsigned char *data, size_t size,
  * @return GNUNET_OK on success, GNUNET_SYSERR if result has the wrong encoding
  */
 int
-GNUNET_STRINGS_string_to_data (const char *enc, size_t enclen,
-                              unsigned char *out, size_t out_size);
+GNUNET_STRINGS_string_to_data (const char *enc, 
+			       size_t enclen,
+			       unsigned char *out, 
+			       size_t out_size);
 
-
-#if 0                           /* keep Emacsens' auto-indent happy */
-{
-#endif
-#ifdef __cplusplus
-}
-#endif
-
-enum GNUNET_STRINGS_FilenameCheck
-{
-  GNUNET_STRINGS_CHECK_EXISTS = 0x00000001,
-  GNUNET_STRINGS_CHECK_IS_DIRECTORY = 0x00000002,
-  GNUNET_STRINGS_CHECK_IS_LINK = 0x00000004,
-  GNUNET_STRINGS_CHECK_IS_ABSOLUTE = 0x00000008
-};
 
 /**
  * Parse a path that might be an URI.
@@ -302,8 +319,9 @@ enum GNUNET_STRINGS_FilenameCheck
  *         (if they weren't NULL).
  */
 int
-GNUNET_STRINGS_parse_uri (const char *path, char **scheme_part,
-    const char **path_part);
+GNUNET_STRINGS_parse_uri (const char *path, 
+			  char **scheme_part,
+			  const char **path_part);
 
 
 /**
@@ -328,7 +346,35 @@ GNUNET_STRINGS_path_is_absolute (const char *filename,
 
 
 /**
- * Perform checks on 'filename;
+ * Flags for what we should check a file for.
+ */
+enum GNUNET_STRINGS_FilenameCheck
+{
+  /**
+   * Check that it exists.
+   */
+  GNUNET_STRINGS_CHECK_EXISTS = 0x00000001,
+
+  /**
+   * Check that it is a directory.
+   */
+  GNUNET_STRINGS_CHECK_IS_DIRECTORY = 0x00000002,
+
+  /**
+   * Check that it is a link.
+   */
+  GNUNET_STRINGS_CHECK_IS_LINK = 0x00000004,
+
+  /**
+   * Check that the path is an absolute path.
+   */ 
+  GNUNET_STRINGS_CHECK_IS_ABSOLUTE = 0x00000008
+};
+
+
+/**
+ * Perform checks on 'filename'.  FIXME: some duplication with
+ * "GNUNET_DISK_"-APIs.  We should unify those.
  * 
  * @param filename file to check
  * @param checks checks to perform
@@ -388,6 +434,35 @@ int
 GNUNET_STRINGS_to_address_ip (const char *addr,
 			      uint16_t addrlen,
 			      struct sockaddr_storage *r_buf);
+
+
+/**
+ * Returns utf-8 encoded arguments.
+ * Does nothing (returns a copy of argc and argv) on any platform
+ * other than W32.
+ * Returned argv has u8argv[u8argc] == NULL.
+ * Returned argv is a single memory block, and can be freed with a single
+ *   GNUNET_free () call.
+ *
+ * @param argc argc (as given by main())
+ * @param argv argv (as given by main())
+ * @param u8argc a location to store new argc in (though it's th same as argc)
+ * @param u8argv a location to store new argv in
+ * @return GNUNET_OK on success, GNUNET_SYSERR on failure
+ */
+int
+GNUNET_STRINGS_get_utf8_args (int argc, 
+			      char *const *argv, 
+			      int *u8argc,
+                              char *const **u8argv);
+
+
+#if 0                           /* keep Emacsens' auto-indent happy */
+{
+#endif
+#ifdef __cplusplus
+}
+#endif
 
 
 /* ifndef GNUNET_UTIL_STRING_H */

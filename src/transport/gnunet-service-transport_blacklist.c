@@ -230,15 +230,15 @@ read_blacklist_file ()
       GNUNET_CONFIGURATION_get_value_filename (GST_cfg, "TRANSPORT",
                                                "BLACKLIST_FILE", &fn))
   {
-    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG,
-                "Option `%s' in section `%s' not specified!\n",
-                "BLACKLIST_FILE", "TRANSPORT");
+    GNUNET_log_config_missing (GNUNET_ERROR_TYPE_DEBUG,
+			       "transport", "BLACKLIST_FILE");
     return;
   }
   if (GNUNET_OK != GNUNET_DISK_file_test (fn))
-    GNUNET_DISK_fn_write (fn, NULL, 0,
-                          GNUNET_DISK_PERM_USER_READ |
-                          GNUNET_DISK_PERM_USER_WRITE);
+  {
+    GNUNET_free (fn);
+    return; /* no blacklist */
+  }
   if (GNUNET_OK != GNUNET_DISK_file_size (fn,
       &fsize, GNUNET_NO, GNUNET_YES))
   {
@@ -247,9 +247,9 @@ read_blacklist_file ()
     GNUNET_free (fn);
     return;
   }
-  if (fsize == 0)
+  if (0 == fsize)
   {
-    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, _("Blacklist file `%s' is empty.\n"),
+    GNUNET_log (GNUNET_ERROR_TYPE_DEBUG, "Blacklist file `%s' is empty.\n",
                 fn);
     GNUNET_free (fn);
     return;
@@ -395,7 +395,7 @@ GST_blacklist_start (struct GNUNET_SERVER_Handle *server)
  * @return GNUNET_OK (continue to iterate)
  */
 static int
-free_blacklist_entry (void *cls, const GNUNET_HashCode * key, void *value)
+free_blacklist_entry (void *cls, const struct GNUNET_HashCode * key, void *value)
 {
   char *be = value;
 
@@ -543,12 +543,16 @@ struct TestConnectionContext
  * @param ats performance data
  * @param ats_count number of entries in ats (excluding 0-termination)
  * @param address the address
+ * @param bandwidth_in inbound quota in NBO
+ * @param bandwidth_out outbound quota in NBO
  */
 static void
 test_connection_ok (void *cls, const struct GNUNET_PeerIdentity *neighbour,
                     const struct GNUNET_ATS_Information *ats,
                     uint32_t ats_count,
-                    const struct GNUNET_HELLO_Address *address)
+                    const struct GNUNET_HELLO_Address *address,
+                    struct GNUNET_BANDWIDTH_Value32NBO bandwidth_in,
+                    struct GNUNET_BANDWIDTH_Value32NBO bandwidth_out)
 {
   struct TestConnectionContext *tcc = cls;
   struct GST_BlacklistCheck *bc;
@@ -684,7 +688,8 @@ GST_blacklist_add_peer (const struct GNUNET_PeerIdentity *peer,
               GNUNET_i2s (peer), transport_name);
   if (blacklist == NULL)
     blacklist =
-        GNUNET_CONTAINER_multihashmap_create (TRANSPORT_BLACKLIST_HT_SIZE);
+      GNUNET_CONTAINER_multihashmap_create (TRANSPORT_BLACKLIST_HT_SIZE,
+					    GNUNET_NO);
   GNUNET_CONTAINER_multihashmap_put (blacklist, &peer->hashPubKey,
                                      GNUNET_strdup (transport_name),
                                      GNUNET_CONTAINER_MULTIHASHMAPOPTION_MULTIPLE);
@@ -701,7 +706,7 @@ GST_blacklist_add_peer (const struct GNUNET_PeerIdentity *peer,
  * @return GNUNET_OK if the entry does not match, GNUNET_NO if it matches
  */
 static int
-test_blacklisted (void *cls, const GNUNET_HashCode * key, void *value)
+test_blacklisted (void *cls, const struct GNUNET_HashCode * key, void *value)
 {
   const char *transport_name = cls;
   char *be = value;

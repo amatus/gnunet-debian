@@ -550,7 +550,7 @@ transmit_dns_request_to_mesh (void *cls,
   if (mlen > size)
   {    
     mesh_th = GNUNET_MESH_notify_transmit_ready (mesh_tunnel,
-						 GNUNET_NO, 0,
+						 GNUNET_NO,
 						 TIMEOUT,
 						 NULL, mlen,
 						 &transmit_dns_request_to_mesh,
@@ -569,7 +569,7 @@ transmit_dns_request_to_mesh (void *cls,
   rc = transmit_queue_head;
   if (NULL != rc)
     mesh_th = GNUNET_MESH_notify_transmit_ready (mesh_tunnel,
-						 GNUNET_NO, 0,
+						 GNUNET_NO,
 						 TIMEOUT,
 						 NULL, ntohs (rc->mesh_message->size),
 						 &transmit_dns_request_to_mesh,
@@ -668,7 +668,7 @@ dns_pre_request_handler (void *cls,
 				    rc);
   if (NULL == mesh_th)
     mesh_th = GNUNET_MESH_notify_transmit_ready (mesh_tunnel,
-						 GNUNET_NO, 0,
+						 GNUNET_NO,
 						 TIMEOUT,
 						 NULL, mlen,
 						 &transmit_dns_request_to_mesh,
@@ -932,7 +932,7 @@ run (void *cls, char *const *args GNUNET_UNUSED,
       GNUNET_SCHEDULER_shutdown ();
       return;
     }
-    mesh_handle = GNUNET_MESH_connect (cfg, 1, NULL, NULL, NULL,
+    mesh_handle = GNUNET_MESH_connect (cfg, NULL, NULL, NULL,
 				       mesh_handlers, mesh_types);
     if (NULL == mesh_handle)
     {
@@ -966,12 +966,17 @@ main (int argc, char *const *argv)
   static const struct GNUNET_GETOPT_CommandLineOption options[] = {
     GNUNET_GETOPT_OPTION_END
   };
+  int ret;
 
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "gnunet-daemon-pt",
-                              gettext_noop
-                              ("Daemon to run to perform IP protocol translation to GNUnet"),
-                              options, &run, NULL)) ? 0 : 1;
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+  ret = (GNUNET_OK ==
+	 GNUNET_PROGRAM_run (argc, argv, "gnunet-daemon-pt",
+			     gettext_noop
+			     ("Daemon to run to perform IP protocol translation to GNUnet"),
+			     options, &run, NULL)) ? 0 : 1;
+  GNUNET_free ((void*) argv);
+  return ret;
 }
 
 

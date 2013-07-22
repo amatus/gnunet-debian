@@ -11,9 +11,15 @@
 /* This is an Apple Darwin system */
 #undef DARWIN
 
+/* enable expensive heap statistics */
+#undef ENABLE_HEAP_STATISTICS
+
 /* Define to 1 if translation of program messages to the user's native
    language is requested. */
 #undef ENABLE_NLS
+
+/* 1 if freed memory should be poisoned, 0 otherwise */
+#undef ENABLE_POISONING
 
 /* enable workarounds used on Windows (only useful for test cases) */
 #undef ENABLE_WINDOWS_WORKAROUNDS
@@ -23,6 +29,9 @@
 
 /* This is a FreeBSD system */
 #undef FREEBSD
+
+/* This is a GNU system */
+#undef GNU
 
 /* Define to cull all logging calls */
 #undef GNUNET_CULL_LOGGING
@@ -76,9 +85,6 @@
 /* Define to 1 if your system has a working `chown' function. */
 #undef HAVE_CHOWN
 
-/* Define to 1 if you have the `clock_gettime' function. */
-#undef HAVE_CLOCK_GETTIME
-
 /* Define to 1 if you have the `closedir' function. */
 #undef HAVE_CLOSEDIR
 
@@ -119,9 +125,6 @@
 /* Define to 1 if you don't have `vprintf' but do have `_doprnt.' */
 #undef HAVE_DOPRNT
 
-/* Define to 1 if you have the `dup2' function. */
-#undef HAVE_DUP2
-
 /* Define if you have the _dyld_func_lookup function. */
 #undef HAVE_DYLD
 
@@ -134,17 +137,14 @@
 /* Define to 1 if the system has the type `error_t'. */
 #undef HAVE_ERROR_T
 
+/* Define to 1 if you have the <execinfo.h> header file. */
+#undef HAVE_EXECINFO_H
+
 /* Define to 1 if you have the <extractor.h> header file. */
 #undef HAVE_EXTRACTOR_H
 
 /* Define to 1 if you have the <fcntl.h> header file. */
 #undef HAVE_FCNTL_H
-
-/* Define to 1 if you have the `fdatasync' function. */
-#undef HAVE_FDATASYNC
-
-/* Define to 1 if you have the `floor' function. */
-#undef HAVE_FLOOR
 
 /* Define to 1 if you have the `fork' function. */
 #undef HAVE_FORK
@@ -155,14 +155,8 @@
 /* Define to 1 if fseeko (and presumably ftello) exists and is declared. */
 #undef HAVE_FSEEKO
 
-/* Define to 1 if you have the `ftruncate' function. */
-#undef HAVE_FTRUNCATE
-
 /* Define this if getaddrinfo() is available */
 #undef HAVE_GETADDRINFO
-
-/* Define to 1 if you have the `getcwd' function. */
-#undef HAVE_GETCWD
 
 /* Define this if gethostbyaddr() is available */
 #undef HAVE_GETHOSTBYADDR
@@ -191,14 +185,20 @@
 /* Define to 1 if you have the `getpeerucred' function. */
 #undef HAVE_GETPEERUCRED
 
+/* Define to 1 if you have the `getresgid' function. */
+#undef HAVE_GETRESGID
+
+/* Define to 1 if you have the `getrlimit' function. */
+#undef HAVE_GETRLIMIT
+
 /* Define to 1 if you have the `getrusage' function. */
 #undef HAVE_GETRUSAGE
 
 /* Define if the GNU gettext() function is already present or preinstalled. */
 #undef HAVE_GETTEXT
 
-/* Define to 1 if you have the `gettimeofday' function. */
-#undef HAVE_GETTIMEOFDAY
+/* Have glib2 */
+#undef HAVE_GLIB2
 
 /* Define to 1 if you have the <glpk.h> header file. */
 #undef HAVE_GLPK_H
@@ -206,11 +206,11 @@
 /* Define to 1 if `presolve' is a member of `glp_iocp'. */
 #undef HAVE_GLP_IOCP_PRESOLVE
 
-/* Define to 1 if you have the `gmtime' function. */
-#undef HAVE_GMTIME
+/* We have gnutls */
+#undef HAVE_GNUTLS
 
-/* Define to 1 if you have the `gmtime_r' function. */
-#undef HAVE_GMTIME_R
+/* Define to 1 if you have the <gnutls/abstract.h> header file. */
+#undef HAVE_GNUTLS_ABSTRACT_H
 
 /* Define if you have the iconv() function. */
 #undef HAVE_ICONV
@@ -236,7 +236,7 @@
 /* Define to 1 if you have the <langinfo.h> header file. */
 #undef HAVE_LANGINFO_H
 
-/* Define to 1 if you have a functional curl library. */
+/* Have libcurl */
 #undef HAVE_LIBCURL
 
 /* Define if you have the libdl library or equivalent. */
@@ -247,6 +247,9 @@
 
 /* Have GLPK */
 #undef HAVE_LIBGLPK
+
+/* Have libgtop */
+#undef HAVE_LIBGTOP
 
 /* Define to 1 if you have the `intl' library (-lintl). */
 #undef HAVE_LIBINTL
@@ -281,11 +284,11 @@
 /* Define to 1 if you have the <limits.h> header file. */
 #undef HAVE_LIMITS_H
 
+/* Define to 1 if you have the <llapi.h> header file. */
+#undef HAVE_LLAPI_H
+
 /* Define to 1 if you have the <locale.h> header file. */
 #undef HAVE_LOCALE_H
-
-/* Define to 1 if you have the `localtime_r' function. */
-#undef HAVE_LOCALTIME_R
 
 /* Define this if a modern libltdl is already installed */
 #undef HAVE_LTDL
@@ -296,35 +299,32 @@
 /* Define to 1 if you have the <mach-o/dyld.h> header file. */
 #undef HAVE_MACH_O_DYLD_H
 
+/* Define to 1 if you have the `mallinfo' function. */
+#undef HAVE_MALLINFO
+
+/* Define to 1 if you have the <malloc.h> header file. */
+#undef HAVE_MALLOC_H
+
+/* Define to 1 if you have the <malloc/malloc.h> header file. */
+#undef HAVE_MALLOC_MALLOC_H
+
+/* Define to 1 if you have the `malloc_size' function. */
+#undef HAVE_MALLOC_SIZE
+
+/* Define to 1 if you have the `malloc_usable_size' function. */
+#undef HAVE_MALLOC_USABLE_SIZE
+
 /* Define to 1 if you have the <math.h> header file. */
 #undef HAVE_MATH_H
 
-/* Define to 1 if you have the `memmove' function. */
-#undef HAVE_MEMMOVE
-
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
-
-/* Define to 1 if you have the `memset' function. */
-#undef HAVE_MEMSET
 
 /* We have libmicrohttpd */
 #undef HAVE_MHD
 
 /* Define to 1 if you have the <microhttpd.h> header file. */
 #undef HAVE_MICROHTTPD_H
-
-/* Define to 1 if you have the `mkdir' function. */
-#undef HAVE_MKDIR
-
-/* Define to 1 if you have the `mkfifo' function. */
-#undef HAVE_MKFIFO
-
-/* Define to 1 if you have the `mktime' function. */
-#undef HAVE_MKTIME
-
-/* Define to 1 if you have the `mmap' function. */
-#undef HAVE_MMAP
 
 /* Define to 1 if you have the `mremap' function. */
 #undef HAVE_MREMAP
@@ -344,9 +344,6 @@
 /* Define to 1 if you have the <netinet/in_systm.h> header file. */
 #undef HAVE_NETINET_IN_SYSTM_H
 
-/* Define to 1 if you have the `nl_langinfo' function. */
-#undef HAVE_NL_LANGINFO
-
 /* Define to 1 if you have the <nss.h> header file. */
 #undef HAVE_NSS_H
 
@@ -362,29 +359,11 @@
 /* Define if libtool can extract symbol lists from object files. */
 #undef HAVE_PRELOADED_SYMBOLS
 
-/* Define to 1 if you have the `putenv' function. */
-#undef HAVE_PUTENV
-
-/* Define to 1 if you have the `rand' function. */
-#undef HAVE_RAND
-
 /* Define to 1 if you have the `readdir' function. */
 #undef HAVE_READDIR
 
-/* Define to 1 if you have the `realpath' function. */
-#undef HAVE_REALPATH
-
-/* Define to 1 if you have the `rmdir' function. */
-#undef HAVE_RMDIR
-
-/* Define to 1 if you have the `sbrk' function. */
-#undef HAVE_SBRK
-
 /* Define this if select() is available */
 #undef HAVE_SELECT
-
-/* Define to 1 if you have the `setlocale' function. */
-#undef HAVE_SETLOCALE
 
 /* Define to 1 if you have the `setresuid' function. */
 #undef HAVE_SETRESUID
@@ -441,18 +420,6 @@
 /* Define to 1 if you have the <stdlib.h> header file. */
 #undef HAVE_STDLIB_H
 
-/* Define to 1 if you have the `strcasecmp' function. */
-#undef HAVE_STRCASECMP
-
-/* Define to 1 if you have the `strchr' function. */
-#undef HAVE_STRCHR
-
-/* Define to 1 if you have the `strdup' function. */
-#undef HAVE_STRDUP
-
-/* Define to 1 if you have the `strerror' function. */
-#undef HAVE_STRERROR
-
 /* Define to 1 if you have the `strftime' function. */
 #undef HAVE_STRFTIME
 
@@ -468,20 +435,11 @@
 /* Define to 1 if you have the `strlcpy' function. */
 #undef HAVE_STRLCPY
 
-/* Define to 1 if you have the `strncasecmp' function. */
-#undef HAVE_STRNCASECMP
-
 /* Define to 1 if you have the `strndup' function. */
 #undef HAVE_STRNDUP
 
-/* Define to 1 if you have the `strrchr' function. */
-#undef HAVE_STRRCHR
-
-/* Define to 1 if you have the `strstr' function. */
-#undef HAVE_STRSTR
-
-/* Define to 1 if you have the `strtol' function. */
-#undef HAVE_STRTOL
+/* Define to 1 if you have the `strnlen' function. */
+#undef HAVE_STRNLEN
 
 /* Define to 1 if you have the `sysconf' function. */
 #undef HAVE_SYSCONF
@@ -559,9 +517,6 @@
 
 /* We can access-64 bit values that are only 32-bit aligned */
 #undef HAVE_UNALIGNED_64_ACCESS
-
-/* Define to 1 if you have the `uname' function. */
-#undef HAVE_UNAME
 
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
@@ -653,7 +608,10 @@
 /* Defined if libcurl supports TFTP */
 #undef LIBCURL_PROTOCOL_TFTP
 
-/* This is a Linux system */
+/* Define to 1 if you want IDN support. */
+#undef LIBIDN
+
+/* This is a Linux kernel */
 #undef LINUX
 
 /* Define to 1 if `lstat' dereferences a symlink specified with a trailing
@@ -669,6 +627,9 @@
 /* The archive extension */
 #undef LT_LIBEXT
 
+/* The archive prefix */
+#undef LT_LIBPREFIX
+
 /* Define to the extension used for runtime loadable modules, say, ".so". */
 #undef LT_MODULE_EXT
 
@@ -680,8 +641,14 @@
    */
 #undef LT_OBJDIR
 
+/* Define to the shared library suffix, say, ".dylib". */
+#undef LT_SHARED_EXT
+
 /* This is a MinGW system */
 #undef MINGW
+
+/* required libgcrypt version */
+#undef NEED_LIBGCRYPT_VERSION
 
 /* Define if dlsym() requires a leading underscore in symbol names. */
 #undef NEED_USCORE
@@ -749,14 +716,25 @@
 /* Define to 1 if your <sys/time.h> declares `struct tm'. */
 #undef TM_IN_SYS_TIME
 
+/* repository svn version */
+#undef VCS_VERSION
+
 /* Version number of package */
 #undef VERSION
 
 /* This is a Windows system */
 #undef WINDOWS
 
+/* Do we have to use IBM LoadLeveler */
+#undef WITH_LL
+
 /* Define to 1 if the X Window System is missing or not being used. */
 #undef X_DISPLAY_MISSING
+
+/* Enable large inode numbers on Mac OS X 10.5.  */
+#ifndef _DARWIN_USE_64_BIT_INODE
+# define _DARWIN_USE_64_BIT_INODE 1
+#endif
 
 /* Number of bits in a file offset, on hosts where this is settable. */
 #undef _FILE_OFFSET_BITS

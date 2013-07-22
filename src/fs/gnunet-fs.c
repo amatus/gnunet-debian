@@ -55,7 +55,7 @@ static int verbose;
  * @return GNUNET_OK to continue iteration
  */
 static int
-print_indexed (void *cls, const char *filename, const GNUNET_HashCode * file_id)
+print_indexed (void *cls, const char *filename, const struct GNUNET_HashCode * file_id)
 {
   if (NULL == filename)
   {
@@ -119,10 +119,15 @@ main (int argc, char *const *argv)
     GNUNET_GETOPT_OPTION_VERBOSE (&verbose),
     GNUNET_GETOPT_OPTION_END
   };
-  return (GNUNET_OK ==
-          GNUNET_PROGRAM_run (argc, argv, "gnunet-fs [OPTIONS]",
-                              gettext_noop ("Special file-sharing operations"),
-                              options, &run, NULL)) ? ret : 1;
+
+  if (GNUNET_OK != GNUNET_STRINGS_get_utf8_args (argc, argv, &argc, &argv))
+    return 2;
+  ret = (GNUNET_OK ==
+	 GNUNET_PROGRAM_run (argc, argv, "gnunet-fs [OPTIONS]",
+			     gettext_noop ("Special file-sharing operations"),
+			     options, &run, NULL)) ? ret : 1;
+  GNUNET_free ((void*) argv);
+  return ret;
 }
 
 /* end of gnunet-fs.c */

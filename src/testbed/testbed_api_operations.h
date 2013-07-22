@@ -59,20 +59,62 @@ GNUNET_TESTBED_operation_queue_destroy_ (struct OperationQueue *queue);
 
 
 /**
- * Add an operation to a queue.  An operation can be in multiple
- * queues at once.  Once all queues permit the operation to become
- * active, the operation will be activated.  The actual activation
- * will occur in a separate task (thus allowing multiple queue 
- * insertions to be made without having the first one instantly
- * trigger the operation if the first queue has sufficient 
- * resources).
+ * Function to reset the maximum number of operations in the given queue. If
+ * max_active is lesser than the number of currently active operations, the
+ * active operations are not stopped immediately.
+ *
+ * @param queue the operation queue which has to be modified
+ * @param max_active the new maximum number of active operations
+ */
+void
+GNUNET_TESTBED_operation_queue_reset_max_active_ (struct OperationQueue *queue,
+                                                  unsigned int max_active);
+
+
+/**
+ * Add an operation to a queue.  An operation can be in multiple queues at
+ * once. Once the operation is inserted into all the queues
+ * GNUNET_TESTBED_operation_begin_wait_() has to be called to actually start
+ * waiting for the operation to become active.
+ *
+ * @param queue queue to add the operation to
+ * @param operation operation to add to the queue
+ * @param nres the number of units of the resources of queue needed by the
+ *          operation. Should be greater than 0.
+ */
+void
+GNUNET_TESTBED_operation_queue_insert2_ (struct OperationQueue *queue,
+                                         struct GNUNET_TESTBED_Operation
+                                         *operation, unsigned int nres);
+
+
+/**
+ * Add an operation to a queue.  An operation can be in multiple queues at
+ * once. Once the operation is inserted into all the queues
+ * GNUNET_TESTBED_operation_begin_wait_() has to be called to actually start
+ * waiting for the operation to become active.
  *
  * @param queue queue to add the operation to
  * @param operation operation to add to the queue
  */
 void
 GNUNET_TESTBED_operation_queue_insert_ (struct OperationQueue *queue,
-					struct GNUNET_TESTBED_Operation *operation);
+                                        struct GNUNET_TESTBED_Operation
+                                        *operation);
+
+
+/**
+ * Marks the given operation as waiting on the queues.  Once all queues permit
+ * the operation to become active, the operation will be activated.  The actual
+ * activation will occur in a separate task (thus allowing multiple queue
+ * insertions to be made without having the first one instantly trigger the
+ * operation if the first queue has sufficient resources).
+ *
+ * @param operation the operation to marks as waiting
+ */
+void
+GNUNET_TESTBED_operation_begin_wait_ (struct GNUNET_TESTBED_Operation
+                                      *operation);
 
 
 /**
@@ -86,7 +128,8 @@ GNUNET_TESTBED_operation_queue_insert_ (struct OperationQueue *queue,
  */
 void
 GNUNET_TESTBED_operation_queue_remove_ (struct OperationQueue *queue,
-					struct GNUNET_TESTBED_Operation *operation);
+                                        struct GNUNET_TESTBED_Operation
+                                        *operation);
 
 
 
@@ -94,8 +137,10 @@ GNUNET_TESTBED_operation_queue_remove_ (struct OperationQueue *queue,
  * Function to call to start an operation once all
  * queues the operation is part of declare that the
  * operation can be activated.
+ *
+ * @param cls the closure from GNUNET_TESTBED_operation_create_()
  */
-typedef void (*OperationStart)(void *cls);
+typedef void (*OperationStart) (void *cls);
 
 
 /**
@@ -107,9 +152,11 @@ typedef void (*OperationStart)(void *cls);
  * a callback to the 'OperationStart' preceeds the call to
  * 'OperationRelease'.  Implementations of this function are expected
  * to clean up whatever state is in 'cls' and release all resources
- * associated with the operation. 
+ * associated with the operation.
+ *
+ * @param cls the closure from GNUNET_TESTBED_operation_create_()
  */
-typedef void (*OperationRelease)(void *cls);
+typedef void (*OperationRelease) (void *cls);
 
 
 /**
@@ -118,14 +165,21 @@ typedef void (*OperationRelease)(void *cls);
  * @param cls closure for the callbacks
  * @param start function to call to start the operation
  * @param release function to call to close down the operation
- * @param ... FIXME
  * @return handle to the operation
  */
 struct GNUNET_TESTBED_Operation *
-GNUNET_TESTBED_operation_create_ (void *cls,
-				  OperationStart start,
-				  OperationRelease release,
-				  ...);
+GNUNET_TESTBED_operation_create_ (void *cls, OperationStart start,
+                                  OperationRelease release);
+
+
+/**
+ * An operation is 'done' (was cancelled or finished); remove
+ * it from the queues and release associated resources.
+ *
+ * @param operation operation that finished
+ */
+void
+GNUNET_TESTBED_operation_release_ (struct GNUNET_TESTBED_Operation *operation);
 
 
 #endif

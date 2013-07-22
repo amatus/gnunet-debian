@@ -13,6 +13,8 @@ timeout_watchdog_SOURCES = \
 endif
 
 noinst_SCRIPTS = \
+ terminate.py \
+ pydiffer.py \
  gnunet_pyexpect.py \
  gnunet_janitor.py
 
@@ -21,15 +23,16 @@ bin_SCRIPTS = \
 
 dist_pkgdata_DATA = \
  gnunet-logo-color.png \
- testing_hostkeys.dat
+ testing_hostkeys.dat \
+ testing_hostkeys.ecc
 
 EXTRA_DIST = \
  coverage.sh \
- hostlist.cgi \
- hostlist.php \
  report.sh \
+ terminate.py.in \
  gnunet_pyexpect.py.in \
  gnunet_janitor.py.in \
+ pydiffer.py.in \
  gnunet-gns-import.sh
 
 do_subst = $(SED) -e 's,[@]PYTHON[@],$(PYTHON),g'
@@ -56,6 +59,7 @@ test_gnunet_prefix_SOURCES = \
 test_gnunet_prefix_LDADD = \
   $(GCLIBADD) $(WINLIB) \
   $(LTLIBICONV) \
+  $(GN_LIBINTL) \
   -lltdl -lunistring $(XLIB) 
 
 pkghellodir= $(pkgdatadir)/hellos
