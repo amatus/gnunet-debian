@@ -1,0 +1,14 @@
+Hostlist servers are run by volunteers and need to be updated from
+time to time. Since 0.9.5a was released in February 2013 the list
+of active servers has changed.
+--- a/src/hostlist/hostlist.conf
++++ b/src/hostlist/hostlist.conf
+@@ -6,7 +6,7 @@
+ BINARY = gnunet-daemon-hostlist
+ # consider having "-e" as default as well once implemented
+ OPTIONS = -b
+-SERVERS = http://gnunet.org/hostlist http://ioerror.gnunet.org:65535/
++SERVERS = http://v9.gnunet.org:58080/
+ # proxy for downloading hostlists
+ HTTP-PROXY = 
+ # bind hostlist http server to a specific IPv4 or IPv6
